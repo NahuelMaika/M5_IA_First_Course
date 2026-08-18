@@ -5,7 +5,7 @@
 | Ticket | FEAT-001b |
 | Tracker | none |
 | Date | 2026-08-11 |
-| PRD loops | 0 |
+| PRD loops | 1 |
 
 ## Context and Problem
 
@@ -74,6 +74,8 @@ frase en un gasto, ni de rechazarla explicando qué le falta.
   intentar interpretarlos.
 - FR-13: El sistema debe devolver los rechazos sin ningún efecto colateral, en particular sin
   señalar la creación de la categoría que un marcador hubiera originado.
+- FR-14: El sistema debe rechazar el Monto cuando resulte igual a cero, dado que un valor negativo
+  es inexpresable desde el input de texto libre (`kb.md`).
 
 ## Non-Functional Requirements
 
@@ -167,6 +169,8 @@ frase en un gasto, ni de rechazarla explicando qué le falta.
   paquete SHALL declarar 0 dependencias de runtime de terceros.
 - AC-27: WHEN se mide la interpretación de un input de 500 caracteres sobre 1000 ejecuciones
   (NFR-03), THE sistema SHALL resolverlo en menos de 10 ms en el percentil 95.
+- AC-28: IF el Monto resuelto es igual a cero (FR-14), THEN THE sistema SHALL rechazar el input con
+  un motivo identificable: `café 0` se rechaza.
 
 ## Out of Scope
 
