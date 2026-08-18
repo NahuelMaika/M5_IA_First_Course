@@ -14,8 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.test.json",
-    "test": "pnpm run typecheck && vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test": "pnpm run typecheck && vitest run --coverage --exclude tests/performance.test.ts && vitest run tests/performance.test.ts",
+    "test:coverage": "vitest run --coverage --exclude tests/performance.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
