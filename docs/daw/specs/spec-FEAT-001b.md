@@ -6,7 +6,7 @@
 | PRD | docs/daw/prd/prd-FEAT-001b.md |
 | Tier | FEATURE |
 | Date | 2026-08-18 |
-| Spec loops | 0 |
+| Spec loops | 1 |
 
 ## Summary
 
@@ -35,6 +35,7 @@ primero para que los bloques siguientes puedan correr su propia suite desde el p
 | FR-11 | Block 1 (tipos), Block 3, Block 6, Block 7 (motivos concretos) |
 | FR-12 | Block 8 |
 | FR-13 | Block 8 |
+| FR-14 | Block 6 |
 | NFR-01 | Block 10 |
 | NFR-02 | Block 1, Block 10 |
 | NFR-03 | Block 10 |
@@ -215,11 +216,18 @@ lo decide Block 6 al no encontrar Monto.
 **Completion criterion**
 `numerals.test.ts` cubre AC-09, AC-10 y pasa.
 
-## Block 6 — Determinación del Monto (FR-06, NFR-05)
+## Block 6 — Determinación del Monto (FR-06, FR-14, NFR-05)
 
 **Files**
 - `packages/domain/src/amount.ts` (new) — `determineAmount(tokens: string[]):
-  { amount: number } | { rejection: "monto_indeterminable" | "monto_malformado" }`.
+  { amount: number } | { rejection: RejectedExpense["reason"] }`. Los rechazos usan los literales en
+  inglés ya definidos en `types.ts` (`amount_indeterminate`, `amount_malformed`), consistente con el
+  patrón ya establecido por `temporal.ts` (Block 3) de reutilizar el contrato de tipos de Block 1 en
+  vez de nombres sueltos en español — el spec describe la intención en español, `types.ts` es la
+  fuente de verdad del literal exacto.
+- `packages/domain/src/types.ts` (modified) — agrega `amount_zero` a la unión
+  `RejectedExpense["reason"]` (Block 1 no lo anticipó; FR-14 es un requisito agregado por loop
+  correctivo PLAN↔DEFINE, posterior a Block 1).
 - `packages/domain/tests/amount.test.ts` (new).
 
 **Logic**
@@ -227,27 +235,31 @@ Implementa la tabla de desempate de kb.md sobre los tokens numéricos que quedan
 exactamente uno → ese es el Monto lleve `$` o no; varios con exactamente uno marcado con `$` → gana
 el marcado; varios sin ninguno marcado, o varios con más de uno marcado → rechazo). Interpreta con
 convención es-AR (`.` miles, `,` decimales), exige exactamente 2 decimales sin truncar ni redondear,
-tope 999.999.999,99.
+tope 999.999.999,99. Un Monto resuelto que da exactamente 0 se rechaza (FR-14): un monto negativo es
+inexpresable desde texto libre (el `-` nunca sobrevive como parte de un número, kb.md), así que el
+cero es el único valor no positivo alcanzable por esta vía.
 
 **Input validation**
 Formas malformadas (`1.5`, `1.50`, `1500,555`) se rechazan explícitamente — nunca se adivina una
 lectura.
 
 **Error handling**
-- Ningún número, o varios sin desempate posible → `monto_indeterminable`.
-- Número con formato inválido → `monto_malformado`.
+- Ningún número, o varios sin desempate posible → `amount_indeterminate`.
+- Número con formato inválido → `amount_malformed`.
+- Monto resuelto igual a 0 → `amount_zero` (FR-14).
 
 **Required tests**
 - [ ] AC-11 — `café 1500` → Monto 1500
 - [ ] AC-12 — `2 cafés $3000` → Monto 3000 (gana el marcado)
 - [ ] AC-13 — `café 1.500,50` → Monto 1500.50
-- [ ] AC-18 — `2 cafés 3000` y `ruta 2 5000` → `monto_indeterminable`
-- [ ] AC-19 — `café 1.5`, `café 1.50`, `café 1500,555` → `monto_malformado`
+- [ ] AC-18 — `2 cafés 3000` y `ruta 2 5000` → `amount_indeterminate`
+- [ ] AC-19 — `café 1.5`, `café 1.50`, `café 1500,555` → `amount_malformed`
+- [ ] AC-28 — `café 0` → `amount_zero`
 - [ ] Mitigación del threat model: un monto con más de 2 decimales nunca se trunca ni se redondea —
   se rechaza (NFR-05)
 
 **Completion criterion**
-`amount.test.ts` cubre AC-11, AC-12, AC-13, AC-18, AC-19 y pasa.
+`amount.test.ts` cubre AC-11, AC-12, AC-13, AC-18, AC-19, AC-28 y pasa.
 
 ## Block 7 — Descarte de muletillas → Lugar (FR-07)
 
