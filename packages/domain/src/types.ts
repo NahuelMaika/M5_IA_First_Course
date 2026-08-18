@@ -39,6 +39,10 @@ export interface ParsedExpense {
  *   numbers with no single one marked `$`.
  * - `amount_malformed`: FR-06/FR-11 -- malformed thousands/decimal
  *   separators, or more than 2 decimals.
+ * - `amount_zero`: FR-14 -- the resolved Monto is exactly 0. A negative
+ *   amount is inexpressible from free text (kb.md: `-` never survives as
+ *   part of a number), so zero is the only non-positive value reachable
+ *   through this path.
  * - `empty_place`: FR-07/FR-11 -- Lugar empty after filler-word discard.
  * - `future_date`: FR-02/FR-11 -- resolved date is after `referenceDate`.
  * - `date_out_of_window`: FR-02/FR-11 -- resolved date predates the
@@ -55,6 +59,7 @@ export type RejectionReason =
   | "empty_left_segment"
   | "amount_indeterminate"
   | "amount_malformed"
+  | "amount_zero"
   | "empty_place"
   | "future_date"
   | "date_out_of_window"
