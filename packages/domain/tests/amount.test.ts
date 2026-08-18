@@ -12,7 +12,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 1500 });
+    expect(result).toEqual({ amount: 1500, consumedTokens: { start: 1, end: 2 } });
   });
 
   it("AC-12: '2 cafes $3000' -> several numbers, the '$'-marked one wins", () => {
@@ -20,7 +20,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 3000 });
+    expect(result).toEqual({ amount: 3000, consumedTokens: { start: 2, end: 3 } });
   });
 
   it("AC-12: a '$' followed by a plain number token (space-separated form) marks it", () => {
@@ -28,7 +28,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 3000 });
+    expect(result).toEqual({ amount: 3000, consumedTokens: { start: 2, end: 4 } });
   });
 
   it("AC-13: 'cafe 1.500,50' interprets es-AR thousands/decimal separators -> 1500.50", () => {
@@ -36,7 +36,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 1500.5 });
+    expect(result).toEqual({ amount: 1500.5, consumedTokens: { start: 1, end: 2 } });
   });
 
   it("AC-18: '2 cafes 3000' -> several numbers, none marked, is ambiguous", () => {
@@ -111,7 +111,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 12345678 });
+    expect(result).toEqual({ amount: 12345678, consumedTokens: { start: 0, end: 1 } });
   });
 
   it("`3000$` never marks the amount -- the '$' only marks the number that FOLLOWS it", () => {
@@ -121,7 +121,7 @@ describe("determineAmount", () => {
 
     // Exactly one number token ('3000'); the trailing lone '$' has no effect
     // and does not create a second candidate.
-    expect(result).toEqual({ amount: 3000 });
+    expect(result).toEqual({ amount: 3000, consumedTokens: { start: 1, end: 2 } });
   });
 
   it("a '$' with no number after it has no effect, and a single remaining number still resolves", () => {
@@ -129,7 +129,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 3000 });
+    expect(result).toEqual({ amount: 3000, consumedTokens: { start: 1, end: 3 } });
   });
 
   it("an amount over the 999.999.999,99 cap is rejected", () => {
@@ -145,7 +145,7 @@ describe("determineAmount", () => {
 
     const result = determineAmount(tokens);
 
-    expect(result).toEqual({ amount: 999999999.99 });
+    expect(result).toEqual({ amount: 999999999.99, consumedTokens: { start: 0, end: 1 } });
   });
 
   it("AC-28: 'cafe 0' -> a well-formed amount that resolves to exactly 0 is rejected", () => {

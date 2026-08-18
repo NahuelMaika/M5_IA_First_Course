@@ -36,6 +36,13 @@
  * this path. This check runs only after the winning candidate has already
  * parsed as well-formed -- it is distinct from `amount_malformed` (a shape
  * problem) and from `amount_indeterminate` (no usable candidate at all).
+ *
+ * On success, the result also reports the `consumedTokens` span -- the
+ * range, over the input `tokens` array, that produced the winning Monto
+ * candidate (the number token, plus its preceding `$` token when the mark
+ * was space-separated). Callers that need to know which tokens formed the
+ * Monto (e.g. to exclude them when computing Lugar) consume this span
+ * instead of re-deriving it.
  */
 
 import type { RejectedExpense } from "./types.ts";
@@ -46,7 +53,15 @@ export type AmountRejectionReason = Extract<
   "amount_indeterminate" | "amount_malformed" | "amount_zero"
 >;
 
-export type AmountResult = { amount: number } | { rejection: AmountRejectionReason };
+/** A half-open range of token indices (`end` exclusive), over the tokens array a caller passed in. */
+export interface TokenSpan {
+  start: number;
+  end: number; // exclusive
+}
+
+export type AmountResult =
+  | { amount: number; consumedTokens: TokenSpan }
+  | { rejection: AmountRejectionReason };
 
 const MAX_AMOUNT = 999_999_999.99;
 
@@ -68,6 +83,8 @@ interface NumberCandidate {
   /** The digit-and-separator portion, with any leading `$` stripped. */
   raw: string;
   marked: boolean;
+  /** The token span (over the caller's `tokens` array) this candidate consumed. */
+  span: TokenSpan;
 }
 
 function isNumberToken(token: string): boolean {
@@ -88,21 +105,21 @@ function collectNumberCandidates(tokens: string[]): NumberCandidate[] {
     const token = tokens[index]!;
 
     if (token.startsWith("$") && token.length > 1 && isNumberToken(token.slice(1))) {
-      candidates.push({ raw: token.slice(1), marked: true });
+      candidates.push({ raw: token.slice(1), marked: true, span: { start: index, end: index + 1 } });
       continue;
     }
 
     if (token === "$") {
       const next = tokens[index + 1];
       if (next !== undefined && isNumberToken(next)) {
-        candidates.push({ raw: next, marked: true });
+        candidates.push({ raw: next, marked: true, span: { start: index, end: index + 2 } });
         index += 1; // the marked number was consumed along with its '$'
       }
       continue;
     }
 
     if (isNumberToken(token)) {
-      candidates.push({ raw: token, marked: false });
+      candidates.push({ raw: token, marked: false, span: { start: index, end: index + 1 } });
     }
   }
 
@@ -156,5 +173,5 @@ export function determineAmount(tokens: string[]): AmountResult {
     return { rejection: "amount_zero" };
   }
 
-  return { amount };
+  return { amount, consumedTokens: winner.span };
 }
