@@ -1,0 +1,19 @@
+{
+  "name": "ggasia",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.10.0",
+  "scripts": {
+    "build:packages": "pnpm --filter \"./packages/*\" run build",
+    "test": "pnpm run build:packages && pnpm -r --if-present run test",
+    "dev": "pnpm run build:packages && pnpm -r --if-present --parallel run dev"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
