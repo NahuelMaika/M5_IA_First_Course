@@ -53,3 +53,17 @@ Ambos verificados también por `purity.test.ts` de cada paquete (AC-26/AC-16 res
 
 Total: 0 vulnerabilidades (0 Critical, 0 High, 0 Medium sin resolver)
 Result: PASSED
+
+## Re-scan — corrective loop (fix AC-08, commit dd4affc)
+
+Fecha: 2026-08-19
+Alcance: `packages/domain/src/filler-words.ts` (nueva función `isBareMarkerSymbol`) y sus tests.
+
+✅ **Secretos/inyección/XSS:** sin coincidencias en el diff.
+✅ **ReDoS:** el regex nuevo (`/^[#$]+$/`, filler-words.ts:53) es una clase de caracteres simple
+sin cuantificadores anidados ni alternación — sin riesgo de backtracking catastrófico, tiempo
+lineal en el largo del token.
+✅ **Dependencias:** sin cambios (`pnpm audit --prod` sigue limpio).
+
+Total: 0 vulnerabilidades
+Result: PASSED
