@@ -38,7 +38,10 @@ function normalizeToken(token: string): string {
 }
 
 // kb.md line 278 -- closed and normative, discarded in any position.
-const SPENDING_VERB_WORDS = new Set([
+// Exported (read-only) so Block 10's `invariant.test.ts` can cross-check its
+// tokens against the categorization keyword table without duplicating the
+// list -- the set itself is never mutated by any consumer.
+export const SPENDING_VERB_WORDS: ReadonlySet<string> = new Set([
   "gaste",
   "gasto",
   "gastamos",
@@ -57,7 +60,8 @@ const SPENDING_VERB_WORDS = new Set([
 ]);
 
 // kb.md line 285-286 -- closed and normative, trimmed only at the extremes.
-const CONNECTOR_WORDS = new Set([
+// Exported for the same reason as `SPENDING_VERB_WORDS` above.
+export const CONNECTOR_WORDS: ReadonlySet<string> = new Set([
   "en",
   "de",
   "del",
