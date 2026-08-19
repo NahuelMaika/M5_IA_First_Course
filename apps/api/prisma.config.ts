@@ -22,6 +22,16 @@
  * NOT overridden (dotenv's default `override: false`) -- this is what lets migrations run against
  * `DIRECT_URL_TEST` by exporting it into `DIRECT_URL` at invocation time, without ever editing
  * this file or the root `.env`.
+ *
+ * `migrations.seed` (Block 3, spec-FEAT-002) is the Prisma 7 equivalent of the old
+ * `package.json` `"prisma": { "seed": ... }` field -- that field was removed in Prisma 7, the
+ * seed command now lives on `PrismaConfig["migrations"]["seed"]` here (confirmed against
+ * `@prisma/config`'s type declarations; `prisma db seed` / `prisma migrate reset` read it from
+ * this file, not from `package.json`). The command itself is plain `node`, not `tsx`: this
+ * project targets Node >= 22 (AGENTS.md), and Node's built-in TypeScript type-stripping
+ * (`--experimental-strip-types`, unflagged by default from Node 23.6) runs `prisma/seed.ts`
+ * directly without adding a bundler dependency -- the flag is accepted (and a no-op) on newer
+ * Node versions too, so the same command works across the >= 22 range this project supports.
  */
 import { config } from "dotenv";
 import path from "node:path";
@@ -34,6 +44,7 @@ export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: {
     path: "prisma/migrations",
+    seed: "node --experimental-strip-types prisma/seed.ts",
   },
   datasource: {
     url: process.env["DIRECT_URL"],
