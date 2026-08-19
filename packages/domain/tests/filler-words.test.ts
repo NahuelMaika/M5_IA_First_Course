@@ -97,6 +97,36 @@ describe("stripFillerWords", () => {
     expect(stripFillerWords([])).toEqual([]);
   });
 
+  describe("AC-08: a bare '#' or '$' left over from an invalid marker/amount is discarded, never surviving as Lugar", () => {
+    it("discards a bare '#' token, regardless of position", () => {
+      const tokens = ["nafta", "#"];
+
+      const result = stripFillerWords(tokens);
+
+      expect(result).toEqual(["nafta"]);
+    });
+
+    it("discards a bare '$' token, regardless of position", () => {
+      const tokens = ["nafta", "$"];
+
+      const result = stripFillerWords(tokens);
+
+      expect(result).toEqual(["nafta"]);
+    });
+
+    it("discards a bare '#' in the interior of the token array, not only at the edges", () => {
+      const tokens = ["casa", "#", "de", "comidas"];
+
+      const result = stripFillerWords(tokens);
+
+      expect(result).toEqual(["casa", "de", "comidas"]);
+    });
+
+    it("a single bare '#' token leaves an empty Lugar", () => {
+      expect(stripFillerWords(["#"])).toEqual([]);
+    });
+  });
+
   describe("performance (threat model mitigation, HIGH risk: O(n) edge-trim, never shift()/unshift() in a loop)", () => {
     it("resolves a 500-character all-connector adversarial input in a few milliseconds", () => {
       const raw = "en ".repeat(167).trimEnd(); // >= 500 chars, all closed-list connector tokens

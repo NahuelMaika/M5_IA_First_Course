@@ -92,6 +92,26 @@ describe("parseExpense", () => {
     });
   });
 
+  describe("AC-08: a bare '#' (no valid marker) is discarded, never leaking into Lugar", () => {
+    it("'pagué 3000 de nafta # ayer' -> Lugar 'nafta', Categoría 'Transporte'", () => {
+      const categorizer = createStubCategorizer("Transporte");
+
+      const result = parseExpense(
+        "pagué 3000 de nafta # ayer",
+        REFERENCE_DATE,
+        categorizer,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.expense.place).toBe("nafta");
+      expect(result.expense.name).toBe("nafta");
+      expect(result.expense.category).toBe("Transporte");
+      expect(result.expense.categoryOrigin).toBe("automatica");
+      expect(categorizer.calls).toEqual(["nafta"]);
+    });
+  });
+
   describe("AC-23: length caps rejected before/without guessing an interpretation", () => {
     it("rejects raw input over 500 characters before interpreting anything", () => {
       const raw = "a".repeat(MAX_RAW_INPUT_LENGTH + 1);

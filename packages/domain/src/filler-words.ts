@@ -37,6 +37,23 @@ function normalizeToken(token: string): string {
     .replace(COMBINING_DIACRITICAL_MARKS_PATTERN, "");
 }
 
+// A token made up ENTIRELY of `#` and/or `$` characters (e.g. "#", "$", "##")
+// is residue from an earlier stage that looked for -- but did not find -- a
+// valid construct anchored on that symbol: an invalid category marker
+// (`extractCategoryMarker`, kb.md line 181/185, AC-08) or a `$` with no
+// number to mark (`determineAmount`'s `collectNumberCandidates`). Neither
+// stage consumes that lone symbol, by design -- each stays blind to whether
+// a LATER stage would otherwise strip it. It is not a muletilla from kb.md's
+// two closed lists (those never gain a member without re-measuring
+// accuracy); it is punctuation with no letters that never was, and never
+// could be, part of a place name, so it is discarded here -- in ANY
+// position, same as spending verbs -- rather than left to leak into Lugar.
+const BARE_MARKER_SYMBOL_PATTERN = /^[#$]+$/;
+
+function isBareMarkerSymbol(token: string): boolean {
+  return BARE_MARKER_SYMBOL_PATTERN.test(token);
+}
+
 // kb.md line 278 -- closed and normative, discarded in any position.
 // Exported (read-only) so Block 10's `invariant.test.ts` can cross-check its
 // tokens against the categorization keyword table without duplicating the
@@ -97,7 +114,7 @@ export const CONNECTOR_WORDS: ReadonlySet<string> = new Set([
  */
 export function stripFillerWords(tokens: string[]): string[] {
   const withoutVerbs = tokens.filter(
-    (token) => !SPENDING_VERB_WORDS.has(normalizeToken(token)),
+    (token) => !SPENDING_VERB_WORDS.has(normalizeToken(token)) && !isBareMarkerSymbol(token),
   );
 
   let start = 0;
