@@ -36,11 +36,11 @@ describe("Categorizer port", () => {
     );
   });
 
-  it("exports exactly the port, the factory, tokenize and normalize -- no keyword table (ADR-001)", () => {
+  it("exports exactly the port, the factory, resolveCategoryName, tokenize and normalize -- no keyword table (ADR-001, ADR-004)", () => {
     const exportedNames = Object.keys(publicApi);
 
     expect(exportedNames.sort()).toEqual(
-      ["createCategorizer", "normalize", "tokenize"].sort(),
+      ["createCategorizer", "normalize", "resolveCategoryName", "tokenize"].sort(),
     );
     expect(exportedNames).not.toContain("CATEGORY_KEYWORDS");
     expect(exportedNames).not.toContain("PLURALIZED_KEYWORDS");
