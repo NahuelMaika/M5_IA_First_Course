@@ -11,6 +11,7 @@
 
 import Fastify, { type FastifyInstance } from "fastify";
 import prismaPlugin from "./plugins/prisma.ts";
+import { expensesRoutes } from "./routes/expenses.ts";
 import type { PrismaClient } from "./generated/prisma/client.ts";
 
 export interface BuildAppOptions {
@@ -32,6 +33,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   });
 
   app.register(prismaPlugin, { prismaClient: options.prismaClient });
+  app.register(expensesRoutes);
 
   return app;
 }

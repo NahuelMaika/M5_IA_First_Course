@@ -23,17 +23,37 @@ import * as expenseRepository from "../repositories/expense-repository.ts";
 
 type RejectionReason = RejectedExpense["reason"];
 
+/**
+ * Minimal logger shape the service needs -- deliberately not Fastify's/Pino's full type, so this
+ * module (which must stay outside `apps/api`'s HTTP concerns per `routes -> service ->
+ * repository`) doesn't couple to Fastify just to log. The route passes `request.log`/`fastify.log`
+ * as-is, since Pino's `error` method is structurally compatible with this shape.
+ */
+export interface MinimalLogger {
+  error: (obj: unknown, msg: string) => void;
+}
+
 export interface ExpenseServiceDeps {
   prisma: PrismaClient;
+  logger?: MinimalLogger;
 }
 
 export type ExpenseServiceResult =
-  | { outcome: "created"; expense: Expense }
+  | { outcome: "created"; expense: Expense; category: string }
   | { outcome: "rejected"; reason: RejectionReason }
   | { outcome: "internal_error" };
 
+interface CategoryResolution {
+  categoryId: string;
+  categoryName: string;
+}
+
 /**
- * Resolves the `categoryId` an already-parsed expense must be persisted with.
+ * Resolves the `categoryId` AND the category's display name an already-parsed expense must be
+ * persisted/reported with. The name is returned alongside the id because it is already in memory
+ * at this point (`parsed.category`, or the name `resolveCategoryName` resolved) -- the route
+ * (Block 10) needs `category: string` for its FR-13 response and must not query Prisma directly
+ * for it (that would violate `routes -> service -> repository`).
  *
  * NOTE: `categoryRepository.findVisibleForUser` (Block 8) returns `VisibleCategory[]` --
  * `{ name, active }`, no `id` -- because that is exactly the shape `resolveCategoryName`
@@ -41,14 +61,14 @@ export type ExpenseServiceResult =
  * back to its id via `categoryRepository.findByNameForUser`, keeping this function entirely on the
  * `routes -> service -> repository` layering (no direct Prisma access here).
  */
-async function resolveCategoryId(
+async function resolveCategory(
   prisma: PrismaClient,
   userId: string,
   parsed: ParsedExpense,
-): Promise<string | null> {
+): Promise<CategoryResolution | null> {
   if (parsed.categoryOrigin === "automatica") {
     const predefined = await categoryRepository.findPredefinedByName(prisma, parsed.category);
-    return predefined?.id ?? null;
+    return predefined ? { categoryId: predefined.id, categoryName: predefined.name } : null;
   }
 
   const visible = await categoryRepository.findVisibleForUser(prisma, userId);
@@ -63,7 +83,7 @@ async function resolveCategoryId(
 
   if (resolution.outcome === "resolved") {
     const match = await categoryRepository.findByNameForUser(prisma, userId, resolution.category);
-    return match?.id ?? null;
+    return match ? { categoryId: match.id, categoryName: match.name } : null;
   }
 
   const created = await categoryRepository.create(prisma, {
@@ -71,7 +91,7 @@ async function resolveCategoryId(
     nameNormalized: normalize(parsed.category),
     ownerId: userId,
   });
-  return created.id;
+  return { categoryId: created.id, categoryName: created.name };
 }
 
 /**
@@ -93,8 +113,8 @@ export async function createExpense(
   const parsed = parseResult.expense;
 
   try {
-    const categoryId = await resolveCategoryId(deps.prisma, userId, parsed);
-    if (categoryId === null) {
+    const resolution = await resolveCategory(deps.prisma, userId, parsed);
+    if (resolution === null) {
       return { outcome: "internal_error" };
     }
 
@@ -103,7 +123,7 @@ export async function createExpense(
       amount: new Prisma.Decimal(parsed.amount.toFixed(2)),
       place: parsed.place,
       when: parsed.when,
-      categoryId,
+      categoryId: resolution.categoryId,
       categoryOrigin: parsed.categoryOrigin,
       description: parsed.description,
       name: parsed.name,
@@ -113,8 +133,12 @@ export async function createExpense(
       channel: "texto",
     });
 
-    return { outcome: "created", expense };
-  } catch {
+    return { outcome: "created", expense, category: resolution.categoryName };
+  } catch (error) {
+    // Logs the real error for diagnosability -- never `rawInput` (same precedent as the module
+    // docblock's "no raw category-marker name, ever leaves this module"), since it carries the
+    // user's free-text input.
+    deps.logger?.error({ err: error }, "expense creation failed with an internal error");
     return { outcome: "internal_error" };
   }
 }

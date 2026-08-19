@@ -117,6 +117,7 @@ describe("expenseService.createExpense (Block 9, spec-FEAT-002)", () => {
     expect(result.outcome).toBe("created");
     if (result.outcome === "created") {
       expect(result.expense).toMatchObject({ categoryOrigin: "automatica" });
+      expect(result.category).toBe("Comida");
       const created = prisma.__state.categories.find((c) => c.name === "Comida");
       expect(created).toBeDefined();
     }
@@ -155,6 +156,7 @@ describe("expenseService.createExpense (Block 9, spec-FEAT-002)", () => {
     );
     if (result.outcome === "created") {
       expect(result.expense).toMatchObject({ categoryOrigin: "marcador" });
+      expect(result.category).toBe("golosinas");
     }
   });
 
@@ -174,6 +176,7 @@ describe("expenseService.createExpense (Block 9, spec-FEAT-002)", () => {
     if (result.outcome === "created") {
       const comida = prisma.__state.categories.find((c) => c.name === "Comida");
       expect(result.expense).toMatchObject({ categoryId: comida?.id });
+      expect(result.category).toBe("Comida");
     }
   });
 
@@ -267,5 +270,43 @@ describe("expenseService.createExpense (Block 9, spec-FEAT-002)", () => {
     expect(result).toEqual({ outcome: "internal_error" });
     expect(JSON.stringify(result)).not.toContain("Prisma exploded");
     expect(JSON.stringify(result)).not.toContain("db.internal");
+  });
+
+  it("logs the real thrown error to deps.logger, without rawInput, when expenseRepository.create throws", async () => {
+    const { createExpense } = await import("../../src/services/expense-service.ts");
+    const prisma = fakePrismaClient(seedFor());
+    const thrown = new Error("Prisma exploded: connection refused at db.internal:5432");
+    prisma.__setExpenseCreateImpl(() => {
+      throw thrown;
+    });
+    const logger = { error: vi.fn() };
+    const rawInput = "café 1500 #secreto-del-usuario";
+
+    const result = await createExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never, logger },
+      TEST_USER_ID,
+      rawInput,
+    );
+
+    expect(result).toEqual({ outcome: "internal_error" });
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    const [loggedObj, loggedMsg] = logger.error.mock.calls[0] as [unknown, string];
+    expect(loggedObj).toMatchObject({ err: thrown });
+    expect(typeof loggedMsg).toBe("string");
+    expect(JSON.stringify(loggedObj)).not.toContain(rawInput);
+  });
+
+  it("does not throw when deps.logger is omitted and expenseRepository.create throws", async () => {
+    const { createExpense } = await import("../../src/services/expense-service.ts");
+    const prisma = fakePrismaClient(seedFor());
+    prisma.__setExpenseCreateImpl(() => {
+      throw new Error("boom");
+    });
+
+    // biome-ignore-next: fake client only exposes the methods the service exercises.
+    const result = await createExpense({ prisma: prisma as never }, TEST_USER_ID, "café 1500");
+
+    expect(result).toEqual({ outcome: "internal_error" });
   });
 });
