@@ -4,14 +4,14 @@
 |--------|-------|
 | Ticket | FEAT-001 |
 | Date | 2026-08-11 |
-| Status | Split |
+| Status | Complete — both sub-tickets merged to `main` |
 
 ## Sub-tickets
 
 | Sub-ticket | Title | PRD | Dependencies | Status |
 |---|---|---|---|---|
-| FEAT-001a | Bootstrap del monorepo y categorizador determinista | prd-FEAT-001a.md | none | active |
-| FEAT-001b | Motor de extracción de campos del gasto | prd-FEAT-001b.md | depends on a | pending |
+| FEAT-001a | Bootstrap del monorepo y categorizador determinista | prd-FEAT-001a.md | none | done — merged to `main` via PR #1 |
+| FEAT-001b | Motor de extracción de campos del gasto | prd-FEAT-001b.md | depends on a | done — merged to `feat/FEAT-001a-categorizer` via PR #2, then to `main` via PR #1 |
 
 ## Suggested implementation order
 
