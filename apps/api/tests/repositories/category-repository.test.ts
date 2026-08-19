@@ -107,4 +107,28 @@ describe("categoryRepository (Block 8, spec-FEAT-002)", () => {
     const notFound = await findPredefinedByName(prisma, `Nonexistent ${randomUUID()}`);
     expect(notFound).toBeNull();
   });
+
+  it("findByNameForUser finds a predefined category, an own category, and returns null for an unknown name", async () => {
+    const { findByNameForUser, create } = await import(
+      "../../src/repositories/category-repository.ts"
+    );
+    const { normalize } = await import("@ggasia/categorization");
+
+    const predefined = await findByNameForUser(prisma, TEST_USER_ID, "Comida");
+    expect(predefined).not.toBeNull();
+    expect(predefined?.name).toBe("Comida");
+    expect(predefined?.ownerId).toBeNull();
+
+    const name = `Test Category ${randomUUID()}`;
+    const nameNormalized = normalize(name);
+    const own = await create(prisma, { name, nameNormalized, ownerId: TEST_USER_ID });
+    createdCategoryIds.push(own.id);
+
+    const found = await findByNameForUser(prisma, TEST_USER_ID, name);
+    expect(found?.id).toBe(own.id);
+    expect(found?.ownerId).toBe(TEST_USER_ID);
+
+    const notFound = await findByNameForUser(prisma, TEST_USER_ID, `Nonexistent ${randomUUID()}`);
+    expect(notFound).toBeNull();
+  });
 });

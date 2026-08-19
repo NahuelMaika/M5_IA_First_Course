@@ -47,3 +47,21 @@ export async function findPredefinedByName(
 ): Promise<Category | null> {
   return prisma.category.findFirst({ where: { ownerId: null, name } });
 }
+
+/**
+ * Finds a category by exact `name`, visible to `userId`: either predefined (`ownerId: null`) or
+ * owned by the user. Used by the service (Block 9) to resolve a marker name that
+ * `resolveCategoryName` already matched against `findVisibleForUser`'s output back to its id.
+ */
+export async function findByNameForUser(
+  prisma: PrismaClient,
+  userId: string,
+  name: string,
+): Promise<Category | null> {
+  return prisma.category.findFirst({
+    where: {
+      name,
+      OR: [{ ownerId: null }, { ownerId: userId }],
+    },
+  });
+}
