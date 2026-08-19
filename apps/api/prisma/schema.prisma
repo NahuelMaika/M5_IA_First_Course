@@ -1,0 +1,102 @@
+// GGasIA Prisma schema (spec-FEAT-002 Block 2: User, Category, Expense).
+//
+// Prisma 7 removed connection URLs from the datasource block ("url"/"directUrl" are no longer
+// accepted in schema files, see https://pris.ly/d/prisma7-client-config): both live in
+// `prisma.config.ts` instead, which Migrate/CLI commands read. `PrismaClient` connects through a
+// driver adapter (`@prisma/adapter-pg`) passed to its constructor, never through a URL baked into
+// this file -- wiring that up is Block 4's job (`src/plugins/prisma.ts`).
+//
+// `postgresqlExtensions` is required as a preview feature to declare the `citext` extension that
+// `User.email` depends on (AGENTS.md: "PostgreSQL + Prisma 7, requires the citext extension").
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [citext]
+}
+
+enum CategoryOrigin {
+  automatica
+  marcador
+
+  @@map("category_origin")
+}
+
+enum ExpenseType {
+  Personal
+
+  @@map("expense_type")
+}
+
+enum ExpenseChannel {
+  texto
+
+  @@map("expense_channel")
+}
+
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique @db.Citext
+  createdAt DateTime @default(now()) @map("created_at")
+
+  ownedCategories Category[]
+  expenses        Expense[]
+
+  @@map("users")
+}
+
+model Category {
+  id   String @id @default(uuid()) @db.Uuid
+  // As written by the seed or the user's marker -- never overwritten.
+  name String
+  // Calculated by the application with normalize() from @ggasia/categorization BEFORE insert.
+  // NEVER recomputed in SQL. The two partial unique indexes that enforce uniqueness on this
+  // value are added by hand in this migration's SQL -- see the comment there (F-SPEC-08): the
+  // Prisma DSL does not support partial/conditional indexes.
+  nameNormalized String @map("name_normalized")
+  // null = predefined category (seeded, Block 3). Non-null = owned by that user (created via a
+  // "#marcador" the user typed that did not match an existing category).
+  ownerId String? @map("owner_id") @db.Uuid
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  owner    User?     @relation(fields: [ownerId], references: [id])
+  expenses Expense[]
+
+  @@map("categories")
+}
+
+model Expense {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+
+  // Decimal(12,2), never Float (NFR-02) -- floating point cannot represent money exactly.
+  amount Decimal @db.Decimal(12, 2)
+  place  String
+  when   DateTime
+
+  categoryId     String         @map("category_id") @db.Uuid
+  categoryOrigin CategoryOrigin @map("category_origin")
+
+  description String @default("")
+  name        String
+  type        ExpenseType @default(Personal)
+  currency    String      @default("ARS")
+
+  // Max 500 chars -- mirrors the RNF-07 limit parseExpense already enforces upstream.
+  rawInput String @map("raw_input") @db.VarChar(500)
+  channel  ExpenseChannel @default(texto)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id])
+  category Category @relation(fields: [categoryId], references: [id])
+
+  @@map("expenses")
+}
