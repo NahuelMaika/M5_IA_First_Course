@@ -1,0 +1,132 @@
+/**
+ * Discards filler words from the left segment's remaining tokens to produce
+ * Lugar (kb.md "Descarte de Muletillas", FR-07). Runs last in the pipeline
+ * order, over tokens that already had Monto, temporal references and the
+ * category marker removed (Blocks 3, 4, 6).
+ *
+ * Two closed, normative lists, compared by whole token, case- and accent-
+ * insensitive (kb.md line 276):
+ * - Spending verbs: discarded in ANY position.
+ * - Connectors: trimmed only from the extremes, re-evaluating the new edge
+ *   after each discard, until neither the first nor the last token is in the
+ *   list (or no token remains). Interior connectors are never touched, so
+ *   compound place names (`obra social`, `casa de comidas`) survive intact.
+ *
+ * Neither list ever intersects the categorization keyword table or its
+ * plurals (kb.md line 301) -- that invariant is covered by Block 10's
+ * `invariant.test.ts`, out of this block's scope.
+ *
+ * This function never rejects anything -- an empty result (Lugar vacío) is
+ * just an empty array. Turning that into the `empty_place` rejection is
+ * Block 8's job, once it orchestrates every stage (kb.md "Solo el vacío
+ * rechaza").
+ */
+
+// Same NFD-strip approach as temporal.ts/numerals.ts, built from code points
+// so every pipeline stage normalizes identically (kb.md "Normalización y
+// Tokenización").
+const COMBINING_DIACRITICAL_MARKS_PATTERN = new RegExp(
+  `[\\u${(0x0300).toString(16).padStart(4, "0")}-\\u${(0x036f).toString(16).padStart(4, "0")}]`,
+  "g",
+);
+
+function normalizeToken(token: string): string {
+  return token
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(COMBINING_DIACRITICAL_MARKS_PATTERN, "");
+}
+
+// A token made up ENTIRELY of `#` and/or `$` characters (e.g. "#", "$", "##")
+// is residue from an earlier stage that looked for -- but did not find -- a
+// valid construct anchored on that symbol: an invalid category marker
+// (`extractCategoryMarker`, kb.md line 181/185, AC-08) or a `$` with no
+// number to mark (`determineAmount`'s `collectNumberCandidates`). Neither
+// stage consumes that lone symbol, by design -- each stays blind to whether
+// a LATER stage would otherwise strip it. It is not a muletilla from kb.md's
+// two closed lists (those never gain a member without re-measuring
+// accuracy); it is punctuation with no letters that never was, and never
+// could be, part of a place name, so it is discarded here -- in ANY
+// position, same as spending verbs -- rather than left to leak into Lugar.
+const BARE_MARKER_SYMBOL_PATTERN = /^[#$]+$/;
+
+function isBareMarkerSymbol(token: string): boolean {
+  return BARE_MARKER_SYMBOL_PATTERN.test(token);
+}
+
+// kb.md line 278 -- closed and normative, discarded in any position.
+// Exported (read-only) so Block 10's `invariant.test.ts` can cross-check its
+// tokens against the categorization keyword table without duplicating the
+// list -- the set itself is never mutated by any consumer.
+export const SPENDING_VERB_WORDS: ReadonlySet<string> = new Set([
+  "gaste",
+  "gasto",
+  "gastamos",
+  "pague",
+  "pago",
+  "pagamos",
+  "compre",
+  "compra",
+  "compramos",
+  "puse",
+  "salio",
+  "costo",
+  "me",
+  "se",
+  "fue",
+]);
+
+// kb.md line 285-286 -- closed and normative, trimmed only at the extremes.
+// Exported for the same reason as `SPENDING_VERB_WORDS` above.
+export const CONNECTOR_WORDS: ReadonlySet<string> = new Set([
+  "en",
+  "de",
+  "del",
+  "a",
+  "al",
+  "por",
+  "para",
+  "con",
+  "y",
+  "el",
+  "la",
+  "los",
+  "las",
+  "un",
+  "una",
+  "lo",
+  "que",
+  "mi",
+]);
+
+/**
+ * Discards spending verbs (any position) and trims connectors from both
+ * extremes (kb.md rules 2-3). The remainder, once empty tokens are collapsed
+ * out, is Lugar.
+ *
+ * The extreme-trim uses `start`/`end` index pointers over the array left
+ * after verb removal, resolved in a single `slice` -- never
+ * `Array#shift()`/`unshift()` in a loop. Those methods re-index every
+ * remaining element on each call, making a naive trim loop O(n^2); this is
+ * exactly the vector the threat model's HIGH-risk mitigation targets: a
+ * 500-character input built entirely out of closed-list tokens (see
+ * `filler-words.test.ts`'s adversarial performance tests).
+ */
+export function stripFillerWords(tokens: string[]): string[] {
+  const withoutVerbs = tokens.filter(
+    (token) => !SPENDING_VERB_WORDS.has(normalizeToken(token)) && !isBareMarkerSymbol(token),
+  );
+
+  let start = 0;
+  let end = withoutVerbs.length; // exclusive
+
+  while (start < end && CONNECTOR_WORDS.has(normalizeToken(withoutVerbs[start]!))) {
+    start += 1;
+  }
+
+  while (end > start && CONNECTOR_WORDS.has(normalizeToken(withoutVerbs[end - 1]!))) {
+    end -= 1;
+  }
+
+  return withoutVerbs.slice(start, end);
+}
