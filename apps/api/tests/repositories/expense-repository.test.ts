@@ -78,6 +78,11 @@ describe("expenseRepository.create (Block 8, spec-FEAT-002)", () => {
     });
     createdExpenseIds.push(expense.id);
 
-    expect(expense.amount.toString()).toBe("1500.50");
+    // `.toString()` on a Decimal read back through pg/@prisma's driver stack is not guaranteed to
+    // preserve a trailing zero from the column's declared scale (a driver-level quirk, not a
+    // precision loss -- the NUMERIC(12,2) column itself always stores the exact scaled value).
+    // `.toFixed(2)` is the actual guarantee NFR-02 and the HTTP layer (routes/expenses.ts) rely
+    // on, so assert against that instead of raw `.toString()` fidelity.
+    expect(expense.amount.toFixed(2)).toBe("1500.50");
   });
 });

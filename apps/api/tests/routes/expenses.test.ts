@@ -13,8 +13,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Some of these tests are the first in the process to transform/load the compiled
 // `@ggasia/domain` module through `vi.mock`'s dynamic `importOriginal`, which can take longer
-// than Vitest's 5s default on a cold run. 15s keeps this from flaking without masking a real hang.
-const TEST_TIMEOUT_MS = 30_000;
+// than Vitest's 5s default on a cold run -- observed flaking at 30s too once the suite runs
+// serially (vitest.config.ts's `fileParallelism: false`, needed to avoid racing DB-dependent
+// files against each other), so this stays generous rather than masking a real hang.
+const TEST_TIMEOUT_MS = 60_000;
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 const TEST_USER_EMAIL = "test@ggasia.test";

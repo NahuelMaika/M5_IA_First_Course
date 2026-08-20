@@ -8,17 +8,18 @@
  * the PRD Goal ("un gasto ingerido por texto quede persistido, categorizado y recuperable en base de
  * datos").
  *
- * `beforeAll` runs `prisma migrate deploy` against `DATABASE_URL_TEST`/`DIRECT_URL_TEST` (idempotent
- * -- Blocks 2's own test already does this too; repeating it here makes this file runnable in
- * isolation) and then `seed()` (Block 3), which upserts the 11 predefined categories and the fixed
+ * `beforeAll` runs `seed()` (Block 3), which upserts the 11 predefined categories and the fixed
  * `TEST_USER_ID` -- both are read-only fixture data for this suite, never recreated or deleted per
- * test.
+ * test. It does NOT run `prisma migrate deploy` -- Block 2's own test file already applies it, and
+ * `vitest.config.ts` runs test files serially (`fileParallelism: false`) precisely so that
+ * ordering is reliable; spawning a second CLI process here was redundant real-network round-trip
+ * work that used to push this hook past its timeout. Run the migration by hand first if this file
+ * is ever executed in isolation.
  *
  * Cleanup strategy (documented per spec's Block 11 "decisión documentada en un comentario al inicio
  * del archivo"): this file does NOT use `TRUNCATE ... CASCADE`. `DATABASE_URL_TEST` is a SHARED,
  * live database that Blocks 2/3/8's own test files (`prisma-schema.test.ts`, `seed.test.ts`,
- * `repositories/*.test.ts`) already exercise concurrently against (Vitest runs test files in
- * parallel worker processes by default) -- a blanket `TRUNCATE expenses` or
+ * `repositories/*.test.ts`) also exercise against -- a blanket `TRUNCATE expenses` or
  * `DELETE FROM categories WHERE owner_id IS NOT NULL` here would silently destroy rows those other
  * files are asserting on mid-run. Every one of those sibling files instead follows "Rule #0"
  * (`testing.instructions.md`): each test creates its own rows and deletes them BY THEIR OWN ID in
@@ -36,7 +37,6 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { execSync } from "node:child_process";
 import { config } from "dotenv";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RejectedExpense } from "@ggasia/domain";
@@ -75,18 +75,12 @@ describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
   const createdCategoryIds: string[] = [];
 
   beforeAll(async () => {
-    // Idempotent: Block 2's own test already applies this migration. Repeating it here keeps this
-    // file runnable on its own, without relying on suite execution order.
-    execSync("pnpm exec prisma migrate deploy", {
-      cwd: apiRoot,
-      env: {
-        ...process.env,
-        DATABASE_URL: TEST_DATABASE_URL,
-        DIRECT_URL: TEST_DIRECT_URL,
-      },
-      stdio: "pipe",
-    });
-
+    // Does NOT run `prisma migrate deploy` here: Block 2's own test (tests/prisma-schema.test.ts)
+    // already applies it, and vitest.config.ts now runs test files serially (fileParallelism:
+    // false) specifically so that ordering is reliable -- spawning a second full CLI process
+    // (real network round-trip) here was redundant work that pushed this hook past its timeout
+    // against the real Supabase test project. If this file is ever run in isolation without the
+    // rest of the suite, run `pnpm exec prisma migrate deploy` by hand first.
     const { PrismaClient } = await import("../src/generated/prisma/client.ts");
     const { PrismaPg } = await import("@prisma/adapter-pg");
     const adapter = new PrismaPg({ connectionString: TEST_DATABASE_URL });

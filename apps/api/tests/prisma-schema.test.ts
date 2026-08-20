@@ -35,19 +35,28 @@ if (!TEST_DATABASE_URL || !TEST_DIRECT_URL) {
 }
 
 describe("prisma schema (Block 2, spec-FEAT-002)", () => {
-  it("prisma migrate deploy applies the init migration cleanly against DATABASE_URL_TEST", () => {
-    expect(() =>
-      execSync("pnpm exec prisma migrate deploy", {
-        cwd: apiRoot,
-        env: {
-          ...process.env,
-          DATABASE_URL: TEST_DATABASE_URL,
-          DIRECT_URL: TEST_DIRECT_URL,
-        },
-        stdio: "pipe",
-      }),
-    ).not.toThrow();
-  });
+  it(
+    "prisma migrate deploy applies the init migration cleanly against DATABASE_URL_TEST",
+    () => {
+      // Spawns a whole `pnpm exec prisma migrate deploy` process (cold Node start + CLI +
+      // real network round-trip to Supabase) -- vitest.config.ts's default testTimeout (30s) can
+      // be too tight for this against real, non-sandboxed network latency. A dedicated, longer
+      // timeout here avoids that without loosening the global default the rest of the suite runs
+      // under.
+      expect(() =>
+        execSync("pnpm exec prisma migrate deploy", {
+          cwd: apiRoot,
+          env: {
+            ...process.env,
+            DATABASE_URL: TEST_DATABASE_URL,
+            DIRECT_URL: TEST_DIRECT_URL,
+          },
+          stdio: "pipe",
+        }),
+      ).not.toThrow();
+    },
+    60_000,
+  );
 
   describe("with a live client against DATABASE_URL_TEST", () => {
     let prisma: InstanceType<
