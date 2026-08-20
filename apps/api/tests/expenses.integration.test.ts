@@ -137,7 +137,11 @@ describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
       if (!persisted) throw new Error("expected the expense to have been persisted");
       createdExpenseIds.push(persisted.id);
 
-      expect(persisted.amount.toString()).toBe("1500.00");
+      // `.toString()` on a Decimal read back through pg/@prisma's driver stack doesn't guarantee
+      // a trailing zero from the column's declared scale (driver-level quirk, not precision loss
+      // -- see tests/repositories/expense-repository.test.ts for the same finding). `.toFixed(2)`
+      // is the actual guarantee NFR-02 and routes/expenses.ts rely on.
+      expect(persisted.amount.toFixed(2)).toBe("1500.00");
       expect(persisted.place).toBe("café");
       expect(persisted.categoryOrigin).toBe("automatica");
 
@@ -228,7 +232,12 @@ describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
 
   describe("AC-04 -- marker naming a nonexistent category creates an own category and associates it", () => {
     it("creates the own category and the expense pointing at it", async () => {
-      const markerName = randomUUID();
+      // `-` only survives inside a token between two LETTERS (tokenize.ts) -- a raw
+      // `randomUUID()` has hyphens next to digits too, so it gets torn into separate tokens and
+      // some of those loose digit fragments compete as Monto candidates, causing a spurious
+      // rejection. Stripping the hyphens keeps it one token (mixed hex letters+digits, so it can
+      // never match the all-digit amount pattern either) while staying unique per run.
+      const markerName = randomUUID().replaceAll("-", "");
       const rawInput = `kiosco 1500 #${markerName}`;
 
       const response = await app.inject({
@@ -259,7 +268,12 @@ describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
 
   describe("AC-05 -- marker normalizing to an already-visible category reuses it, no duplicate", () => {
     it("reuses the own category created by a first request when a second marker normalizes the same", async () => {
-      const markerName = `Regalo Integration ${randomUUID()}`;
+      // `-` only survives inside a token between two LETTERS (tokenize.ts) -- a raw `randomUUID()`
+      // has hyphens next to digits too, which would tear the marker into separate tokens and leak
+      // loose digit fragments into Monto detection (same reasoning as AC-04's marker). Strip its
+      // hyphens before splicing it in; "Regalo-Integration" itself stays fine, its hyphen (from
+      // the space replacement below) sits between two letters.
+      const markerName = `Regalo Integration ${randomUUID().replaceAll("-", "")}`;
       const firstInput = `kiosco 1500 #${markerName.replaceAll(" ", "-")}`;
 
       const firstResponse = await app.inject({
