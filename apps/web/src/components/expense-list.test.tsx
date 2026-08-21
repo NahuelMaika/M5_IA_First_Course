@@ -256,6 +256,38 @@ describe("Page — full screen (Block 9)", () => {
       cleanup();
     }
   });
+
+  it("keeps every interactive control at or above the 24×24px CSS minimum touch target, at the full-screen level (AC-13/NFR-03)", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(200, EXPENSES_BODY));
+    render(<Page />);
+    await screen.findByRole("list", { name: /gastos/i });
+
+    // Same universe as AC-14: the list already has data, so the screen's only interactive
+    // controls are the form's textarea and its submit button.
+    const focusableElements = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
+      )
+    );
+    expect(focusableElements).toHaveLength(2);
+
+    // jsdom does not run a real layout engine, so pixel geometry (getBoundingClientRect) is
+    // never real here -- verify the 24px CSS floor via the Tailwind spacing-scale classes that
+    // the design system uses to size controls instead. `h-6`/`size-6` (24px) is the project's
+    // smallest defined control size and equals the minimum; `h-7`/`size-7` (28px), `h-8`/`size-8`
+    // (32px, the Button default), `h-9`/`size-9` (36px) and `min-h-16` (64px, the Textarea) are
+    // all above it.
+    const meetsMinimumTouchTarget = /\b(h|size)-(6|7|8|9|10|11|12|14|16)\b|\bmin-h-16\b/;
+    // A fixed pixel arbitrary value below 24px (e.g. `h-[20px]`) would defeat the minimum
+    // regardless of any other class present, so it is rejected explicitly rather than trusted
+    // to be absent.
+    const belowMinimumArbitraryPx = /\b(h|size|min-h|min-w)-\[(0|[1-9](\.\d+)?|1\d(\.\d+)?|2[0-3](\.\d+)?)px\]/;
+
+    for (const element of focusableElements) {
+      expect(element.className).toMatch(meetsMinimumTouchTarget);
+      expect(element.className).not.toMatch(belowMinimumArbitraryPx);
+    }
+  });
 });
 
 // Block 9 (spec-FEAT-003b), round 2: exercises the REAL wiring end-to-end -- `Page` composes

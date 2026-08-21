@@ -104,3 +104,26 @@ Ninguna. No hubo hallazgos Medium que requirieran supresión documentada.
 │  Next: gates.sast = true → cerrar CODE, transición a VERIFY   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+## Ronda 2 — corrective loop (2026-08-21)
+
+**Alcance:** único archivo modificado — `apps/web/src/components/expense-list.test.tsx` (32 líneas
+agregadas: un test nuevo que verifica el destino táctil mínimo de 24×24px CSS, AC-13/NFR-03). Sin
+cambios en `apps/api` ni en código de producción de `apps/web`.
+
+- ✅ F-SAST-01: sin secretos — el diff es exclusivamente aserciones sobre `className` con literales
+  de regex, sin strings sensibles.
+- ✅ F-SAST-02/03/05: sin queries, sin `exec`/`spawn`, sin paths — el archivo es un test de
+  componente, no toca I/O.
+- ✅ F-SAST-06: sin `dangerouslySetInnerHTML`/`.innerHTML`.
+- ✅ F-SAST-04/08/17: sin `eval`, sin crypto.
+- ✅ F-SAST-13/16: sin dependencias nuevas en `package.json` — no aplica re-auditar.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  /daw-security-sast [ronda 2] — PASSED                        │
+├─────────────────────────────────────────────────────────────┤
+│  Total: 100% clean, 0 vulnerabilidades (0 critical, 0 high)   │
+│  Next: gates.sast = true → cerrar CODE, transición a VERIFY   │
+└─────────────────────────────────────────────────────────────┘
+```
