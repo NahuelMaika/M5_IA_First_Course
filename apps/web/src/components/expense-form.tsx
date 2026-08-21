@@ -9,6 +9,8 @@ import { apiRequest } from "@/lib/api/client";
 import { notify } from "@/lib/notifications/notifications";
 import { getRejectionMessage, type RejectionReason } from "@/lib/rejection-messages";
 
+import type { CreatedExpense } from "./expense-row";
+
 // RNF-07 (PRD.md): raw input tops at 500 characters, rejected before any interpretation attempt.
 const MAX_INPUT_LENGTH = 500;
 
@@ -33,19 +35,11 @@ function validateExpenseInput(value: string): string | null {
 
 /**
  * Shape of a 201 response body from `POST /expenses` (`apps/api/src/routes/expenses.ts:58-68`).
- * Deliberately has no `id` -- confirmed against that route, which never returns one.
+ * Deliberately has no `id` -- confirmed against that route, which never returns one. Reuses
+ * `expense-row.tsx`'s `CreatedExpense` so both this form's own result and `onCreated` share the
+ * same single definition instead of two structurally-identical interfaces drifting apart.
  */
-interface InterpretedExpense {
-  amount: string;
-  place: string;
-  when: string;
-  category: string;
-  categoryOrigin: string;
-  description: string;
-  name: string;
-  type: string;
-  currency: string;
-}
+type InterpretedExpense = CreatedExpense;
 
 function formatExpenseDate(isoDate: string): string {
   // Fixed locale/timeZone: this is user-facing display, but a floating value here would make the
@@ -77,13 +71,32 @@ export interface ExpenseFormProps {
    * submission attempts (e.g. tests).
    */
   onSubmit?: (value: string) => void;
+  /**
+   * Invoked with the interpreted expense right after a successful (201) creation. Block 9's
+   * `page.tsx` wires this to `expense-list.tsx` so a newly created expense is reflected in the
+   * list, inserted at its correct `when`-descending position.
+   */
+  onCreated?: (expense: CreatedExpense) => void;
 }
 
-export function ExpenseForm({ onSubmit }: ExpenseFormProps) {
+/** Imperative handle exposed via `ref` -- lets a composing screen (Block 9's `page.tsx`) move
+ * real focus to this form's textarea, e.g. from `expense-list.tsx`'s empty-state action. */
+export interface ExpenseFormHandle {
+  focus: () => void;
+}
+
+export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>(
+  function ExpenseForm({ onSubmit, onCreated }, ref) {
   const [value, setValue] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [result, setResult] = React.useState<InterpretedExpense | null>(null);
+
+  React.useImperativeHandle(ref, () => ({
+    focus: () => {
+      document.getElementById(EXPENSE_INPUT_ID)?.focus();
+    },
+  }));
 
   const hasError = error !== null;
 
@@ -115,6 +128,7 @@ export function ExpenseForm({ onSubmit }: ExpenseFormProps) {
         const data = (await response.json()) as InterpretedExpense;
         setResult(data);
         setValue("");
+        onCreated?.(data);
         return;
       }
 
@@ -194,4 +208,5 @@ export function ExpenseForm({ onSubmit }: ExpenseFormProps) {
       ) : null}
     </div>
   );
-}
+  }
+);
