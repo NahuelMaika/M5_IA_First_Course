@@ -5,7 +5,7 @@
 | Ticket | FEAT-003b |
 | Tracker | none |
 | Date | 2026-08-20 |
-| PRD loops | 0 |
+| PRD loops | 1 |
 
 ## Context and Problem
 
@@ -72,8 +72,10 @@ esta pantalla.
   usuario vía `GET /expenses` (FEAT-003a), ordenado con los más recientes primero (RF-48 de
   `PRD.md`).
 - FR-11: El sistema debe reflejar en el listado, sin recargar la página, todo gasto creado con
-  éxito desde el formulario de esta misma pantalla (RF-68 de `PRD.md`), agregándolo como el más
-  reciente.
+  éxito desde el formulario de esta misma pantalla (RF-68 de `PRD.md`), insertándolo en la
+  posición que le corresponde según el orden por fecha del gasto (`when`) que ya aplica
+  `GET /expenses` (FEAT-003a) — no necesariamente al principio de la lista, si su fecha es
+  anterior a la de otros gastos ya visibles.
 - FR-12: El sistema debe presentar cada gasto del listado separando visualmente su fecha, su
   concepto (Nombre), su monto y su categoría, con el monto como dato de mayor peso visual (RF-72 de
   `PRD.md`).
@@ -125,7 +127,8 @@ esta pantalla.
   THE system SHALL mostrar el listado ordenado con los más recientes primero, con fecha, concepto,
   monto y categoría separados.
 - AC-09 (FR-11): WHEN un gasto se crea con éxito, THE system SHALL agregarlo al listado visible sin
-  recargar la página.
+  recargar la página, insertado en la posición que le corresponde según el orden por `when` —
+  no necesariamente como la primera fila.
 - AC-10 (FR-13): IF el usuario no tiene ningún gasto cargado, THEN THE system SHALL mostrar un
   estado vacío explicativo sin tratamiento visual de error, con una acción que lleve el foco al
   formulario.
@@ -194,4 +197,9 @@ esta pantalla.
 
 ## Historial de Cambios
 
+- **v1.1 — 2026-08-21**: corrige FR-11/AC-09, que asumían que un gasto recién creado siempre se
+  agrega al principio del listado. FEAT-003a implementó `GET /expenses` ordenado por `when`
+  (fecha del gasto), no por momento de carga — un gasto con fecha anterior a otros ya visibles
+  debe insertarse en su posición cronológica, no arriba de todo. Detectado al re-validar el PRD
+  al abrir este sub-ticket, tras el cierre de FEAT-003a.
 - **v1.0** — versión inicial, sub-ticket b del split de FEAT-003.
