@@ -98,5 +98,10 @@ model Expense {
   user     User     @relation(fields: [userId], references: [id])
   category Category @relation(fields: [categoryId], references: [id])
 
+  // Covers GET /expenses' WHERE userId = ? ORDER BY when DESC, createdAt DESC (spec-FEAT-003a
+  // Block 1, NFR-01) -- without it the planner would seq scan the whole table plus an in-memory
+  // sort, since the two FKs (user_id, category_id) don't generate an index on their own.
+  @@index([userId, when(sort: Desc), createdAt(sort: Desc)])
+
   @@map("expenses")
 }

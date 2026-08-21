@@ -17,6 +17,7 @@
  */
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
@@ -97,6 +98,36 @@ describe("prisma schema (Block 2, spec-FEAT-002)", () => {
             VALUES (${secondId}::uuid, ${nameNormalized}, ${nameNormalized}, NULL, true, now())
           `,
         ).rejects.toThrow();
+      });
+    });
+
+    describe("composite index on expenses(user_id, when, created_at) (spec-FEAT-003a Block 1)", () => {
+      it("declares the index in the Prisma model with the expected sort directions", () => {
+        const schemaPath = path.resolve(apiRoot, "prisma/schema.prisma");
+        const schema = readFileSync(schemaPath, "utf-8");
+        const expenseModelMatch = schema.match(/model Expense \{[\s\S]*?\n\}/);
+        expect(expenseModelMatch).not.toBeNull();
+        const expenseModel = expenseModelMatch![0];
+
+        expect(expenseModel).toContain(
+          "@@index([userId, when(sort: Desc), createdAt(sort: Desc)])",
+        );
+      });
+
+      it("sad path: exists in the real database after the migration is applied (queries pg_indexes)", async () => {
+        const result = await prisma.$queryRaw<
+          Array<{ indexdef: string }>
+        >`SELECT indexdef FROM pg_indexes WHERE tablename = 'expenses' AND indexname = 'expenses_user_id_when_created_at_idx'`;
+
+        expect(result).toHaveLength(1);
+        // Column order matters: it is what lets the planner satisfy WHERE user_id = ? ORDER BY
+        // ... with an index scan instead of a sort. A single ordered match (rather than three
+        // independent toContain calls) is what actually catches the columns coming back
+        // reordered. Postgres only quotes identifiers that need it (e.g. the reserved word
+        // `when`); plain identifiers like `created_at` come back unquoted from pg_indexes.
+        expect(result[0]!.indexdef).toMatch(
+          /\(user_id, "when" DESC, created_at DESC\)/,
+        );
       });
     });
 
