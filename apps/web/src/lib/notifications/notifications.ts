@@ -95,8 +95,14 @@ export function notify(type: NotificationType, message: string): boolean {
     id,
     type,
     description: trimmedMessage,
-    // A value of 0 tells Base UI's toast manager to never auto-dismiss.
-    timeout: type === "error" ? 0 : SUCCESS_AUTO_DISMISS_MS,
+    // Always 0 (never Base UI's own auto-dismiss), for both "success" and "error": this module
+    // is the ONLY place allowed to decide dismissal timing (AGENTS.md). Passing a non-zero
+    // timeout here too would schedule a SECOND timer for "success" inside Base UI's toast store,
+    // racing the one this module already owns below -- both would eventually call to remove the
+    // same notification, and Base UI's internal timer ignores this module's state entirely (e.g.
+    // it doesn't know a notification was already evicted by `evictOldestToMakeRoom`). Explicit
+    // `toast.close(id)` (via `removeNotification`) is the only path that ever closes a toast.
+    timeout: 0,
     onRemove: () => {
       // Keeps this module's own truth in sync when the toast is closed
       // through any other path (e.g. the person clicking its close button).
