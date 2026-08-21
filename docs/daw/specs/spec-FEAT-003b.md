@@ -162,8 +162,12 @@ No agrega un endpoint nuevo; modifica el comportamiento transversal de todos los
 
 **Completion criterion**
 
-Los 4 tests pasan, y un `fetch` real desde un origen distinto de `WEB_ORIGIN` (simulado con el
-header `Origin` en el test) no recibe el header de autorización CORS en la respuesta.
+Los 4 tests pasan. Nota de precisión (encontrada en la verificación del bloque): con `origin` fijo
+como string, `@fastify/cors` responde siempre `Access-Control-Allow-Origin: <WEB_ORIGIN>`, sin
+comparar contra el `Origin` real del request — es el navegador quien bloquea la lectura de la
+respuesta si su propio origen no coincide con ese valor, no el servidor quien omite el header. El
+criterio real y verificable es que el header refleja exactamente `WEB_ORIGIN`, nunca un valor
+derivado del request ni un wildcard.
 
 ## Block 3 — Tema compartido y shadcn/ui sobre Base UI
 
