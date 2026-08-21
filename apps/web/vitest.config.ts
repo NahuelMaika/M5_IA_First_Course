@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -5,6 +6,13 @@ export default defineConfig({
   // (oxc) reads that per-file and can't leave JSX untransformed, so it needs its own override here.
   oxc: {
     jsx: { runtime: "automatic" },
+  },
+  resolve: {
+    // Mirrors tsconfig.json's "@/*" path alias (shadcn/ui's default import alias) -- Vite does
+    // not read tsconfig "paths" on its own.
+    alias: {
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
   },
   test: {
     environment: "jsdom",
