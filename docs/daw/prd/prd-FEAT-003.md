@@ -10,8 +10,8 @@
 
 | Sub-ticket | Title | PRD | Dependencies | Status |
 |---|---|---|---|---|
-| FEAT-003a | Listado de gastos vía API — GET /expenses | prd-FEAT-003a.md | none | active |
-| FEAT-003b | UI de carga y listado de gastos | prd-FEAT-003b.md | depends on a | pending |
+| FEAT-003a | Listado de gastos vía API — GET /expenses | prd-FEAT-003a.md | none | done — branch `feat/FEAT-003a-expenses-get`, PR #4 (draft, sin mergear), FEAT-003b arranca desde esta rama |
+| FEAT-003b | UI de carga y listado de gastos | prd-FEAT-003b.md | depends on a | active |
 
 ## Suggested implementation order
 a → b
