@@ -32,6 +32,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `createdAt` descending), backed by a new composite index (`userId, when, createdAt` — `expenses`
   had none beyond its PK). `limit` query param (1-200, default 50, 400 outside that range, never
   silently clamped) — the first querystring validation in the repo.
+- [FEAT-003b] `apps/web` (Next.js 16 + React 19 + Tailwind CSS 4 tokens + shadcn/ui on Base UI):
+  first frontend of the project. A free-text expense form (`POST /expenses`) with client-side
+  validation and 422 rejection handling, and a listing (`GET /expenses`) with initial load, empty
+  and error states, wired together on one screen — newly created expenses insert into the list at
+  their correct `when`-descending position without a reload. CORS enabled on `apps/api`
+  (`@fastify/cors`, `WEB_ORIGIN` validated with Zod) so the browser can reach it.
 
 ### Changed
 

@@ -1,0 +1,115 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/*
+ * Shared design tokens (spec-FEAT-003b.md Block 3).
+ *
+ * Single source of truth: no component in this app declares its own color, typography or
+ * spacing value (AGENTS.md, AC-01) -- every visual value resolves through one of the tokens
+ * declared below. Colors are plain hex (not oklch) so a WCAG contrast ratio can be computed
+ * directly from these declared values without a real browser
+ * (see src/lib/theme/contrast.test.ts, NFR-04 / PRD.md RNF-10).
+ *
+ * No dark mode: AGENTS.md explicitly says not to add it unless asked, so this file only
+ * declares a `:root` palette. `dark:` utility variants that ship inside shadcn/ui's generated
+ * components stay inert -- nothing in this app ever adds a `.dark` class to the document.
+ */
+
+@theme {
+  /* Typography: the same system font stack Tailwind ships by default, declared explicitly so
+     it doesn't depend on next/font (no network font download needed at build/test time). */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
+
+  /* RNF-11 / spec Block 3: every interactive control must measure at least 24x24px CSS. */
+  --spacing-control-min: 1.5rem;
+
+  /* Corner-radius ceilings for the button's smallest sizes (`xs`/`icon-xs`/`sm`/`icon-sm`): at
+     those heights the default `--radius-md` reads too round, so it's clamped down. Declared here
+     -- not as a raw `10px`/`12px` literal inside button.tsx -- so the value has one source, per
+     AC-01 (no component declares its own spacing). */
+  --radius-button-xs-cap: 0.625rem;
+  --radius-button-sm-cap: 0.75rem;
+}
+
+@theme inline {
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* Base surface + text. #0F172A on #F8FAFC ~17:1 (contrast.test.ts). */
+  --background: #f8fafc;
+  --foreground: #0f172a;
+
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+
+  /* Primary: the app's one accent color (CTA buttons, focus ring, links).
+     #FFFFFF on #2563EB ~5.17:1 (contrast.test.ts). */
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+
+  /* Secondary surface (e.g. secondary button, subtle panels).
+     #0F172A on #E2E8F0 ~14.5:1 (contrast.test.ts). */
+  --secondary: #e2e8f0;
+  --secondary-foreground: #0f172a;
+
+  /* Muted: de-emphasized text/backgrounds (help text, placeholders).
+     #475569 on #F8FAFC well above 4.5:1 (contrast.test.ts). */
+  --muted: #e2e8f0;
+  --muted-foreground: #475569;
+
+  /* Accent: hover/selected state surface, same pairing as secondary. */
+  --accent: #e2e8f0;
+  --accent-foreground: #0f172a;
+
+  /* Destructive: error text/icon color, always read against the page background --
+     this style never fills a solid destructive background (see Button's destructive variant).
+     #B91C1C on #F8FAFC ~6.4:1 (contrast.test.ts). */
+  --destructive: #b91c1c;
+
+  --border: #cbd5e1;
+  --input: #cbd5e1;
+  --ring: #2563eb;
+
+  --radius: 0.625rem;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}
