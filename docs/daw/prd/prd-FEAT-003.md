@@ -4,14 +4,14 @@
 |--------|-------|
 | Ticket | FEAT-003 |
 | Date | 2026-08-20 |
-| Status | Split |
+| Status | Complete — both sub-tickets done; `feat/FEAT-003b-expenses-ui` merged into `feat/FEAT-003a-expenses-get`, whose own PR #4 to `main` is still open |
 
 ## Sub-tickets
 
 | Sub-ticket | Title | PRD | Dependencies | Status |
 |---|---|---|---|---|
-| FEAT-003a | Listado de gastos vía API — GET /expenses | prd-FEAT-003a.md | none | done — branch `feat/FEAT-003a-expenses-get`, PR #4 (draft, sin mergear), FEAT-003b arranca desde esta rama |
-| FEAT-003b | UI de carga y listado de gastos | prd-FEAT-003b.md | depends on a | active |
+| FEAT-003a | Listado de gastos vía API — GET /expenses | prd-FEAT-003a.md | none | done — branch `feat/FEAT-003a-expenses-get`, PR #4 (draft, sin mergear a main todavía) |
+| FEAT-003b | UI de carga y listado de gastos | prd-FEAT-003b.md | depends on a | done — branch `feat/FEAT-003b-expenses-ui`, PR #5 mergeada contra `feat/FEAT-003a-expenses-get` |
 
 ## Suggested implementation order
 a → b
