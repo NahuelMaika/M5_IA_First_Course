@@ -216,13 +216,9 @@ y no existe ningún `tailwind.config.js` en `apps/web`.
 ## Block 4 — Módulo de notificaciones emergentes
 
 **Files**
-- `apps/web/src/lib/notifications/` (nuevo) — el módulo centralizado de dismissal (funciones
-  `notify`/`dismiss`/`getActiveNotifications` sobre el singleton `toast` de Base UI).
+- `apps/web/src/lib/notifications/` (nuevo) — el módulo centralizado de dismissal (store +
+  hook/context + componente que renderiza los toasts activos sobre el `toast` de Base UI).
 - `apps/web/src/lib/notifications/notifications.test.ts` (nuevo)
-- `apps/web/src/app/layout.tsx` (modificado) — monta `<Toaster />` (instalado en Block 3, nunca
-  montado hasta ahora). Sin esto, `notify()` actualiza su estado interno correctamente pero no
-  renderiza nada visible — hallazgo de la implementación de este bloque, no anticipado al
-  escribir la spec.
 
 **Logic**
 
