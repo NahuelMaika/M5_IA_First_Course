@@ -27,6 +27,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and persists the expense in PostgreSQL (`User`/`Category`/`Expense`, partial unique indexes
   for category-name uniqueness). Seeded with kb.md's 11 predefined categories and a fixed test
   user.
+- [FEAT-003a] `GET /expenses`, the API's first read endpoint. Same `x-user-id` identification as
+  `POST /expenses`. Returns the identified user's expenses ordered by `when` descending (tied by
+  `createdAt` descending), backed by a new composite index (`userId, when, createdAt` — `expenses`
+  had none beyond its PK). `limit` query param (1-200, default 50, 400 outside that range, never
+  silently clamped) — the first querystring validation in the repo.
 
 ### Changed
 
@@ -38,3 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - [FEAT-002] Pinned `deepmerge-ts` to `^8.0.0` via a pnpm override (GHSA-ggr8-5vv4-36mx, stack
   exhaustion on recursive merges), pulled transitively through `@prisma/config`.
+- [FEAT-003a] Flaky AC-07 integration test (FEAT-002): a raw `randomUUID()` used as a category
+  marker could tokenize into loose digit fragments and pass a spurious amount, turning the
+  expected 422 into a false 201 (~2/3 of runs) and leaving orphan rows in the shared test
+  database. Same fix already applied to AC-04/AC-05: strip the hyphens.
