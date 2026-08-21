@@ -334,7 +334,13 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
 
   describe("AC-07 -- unknown marker + indeterminate amount rejects everything, category not created", () => {
     it("422s and creates no category for the unresolved marker", async () => {
-      const markerName = randomUUID();
+      // `-` only survives inside a token between two LETTERS (tokenize.ts) -- a raw `randomUUID()`
+      // has hyphens next to digits too, so it gets torn into separate tokens and some of those
+      // loose digit fragments can compete as a spurious Monto candidate, turning this into a
+      // false 201 instead of the 422 this test exists to prove. Same fix as AC-04/AC-05: stripping
+      // the hyphens keeps it one token that can never match the all-digit amount pattern, while
+      // staying unique per run.
+      const markerName = randomUUID().replaceAll("-", "");
       const rawInput = `kiosco #${markerName}`;
 
       const response = await app.inject({
