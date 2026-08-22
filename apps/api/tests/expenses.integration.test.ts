@@ -41,6 +41,16 @@
  * character set: letters, digits, `-`, `_`) -- this guarantees no collision with rows other parallel
  * test files, or other runs of this same suite, might leave behind, and lets each test look its own
  * row up afterwards via `rawInput`/category name instead of asserting on a global count.
+ *
+ * Block 11 (spec-FEAT-004a) migrated every "logged in" request here from the dead `x-user-id`
+ * header to a real session cookie: `beforeAll` (here, and in the nested `GET /expenses` describe
+ * below for its two extra users) creates a real `Session` row via `sessionRepository.create`
+ * (Block 3), mirroring `tests/repositories/session-repository.test.ts`'s own setup, and sends the
+ * raw token back as `app.inject`'s `cookies` option. Every `Session` row this file creates is
+ * deleted in the matching `afterAll`, alongside its `User` row, per Rule #0
+ * (`testing.instructions.md`) -- `TEST_USER_ID`'s session is deleted before `app.close()`
+ * disconnects `prisma` (Block 4's plugin `onClose` hook), since no query can run against `prisma`
+ * after that.
  */
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -48,6 +58,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { RejectedExpense } from "@ggasia/domain";
+import { create as createSession } from "../src/repositories/session-repository.ts";
 
 // `RejectionReason` itself is not part of the barrel's public surface (only `RejectedExpense` is,
 // per `@ggasia/domain`'s `index.ts`) -- derived the same way `expense-service.ts` (Block 9) does.
@@ -65,7 +76,7 @@ if (!TEST_DATABASE_URL || !TEST_DIRECT_URL) {
   );
 }
 
-const UNKNOWN_USER_ID = "99999999-9999-9999-9999-999999999999";
+const UNKNOWN_SESSION_TOKEN = "unknown-raw-session-token-for-integration-tests";
 
 function formatDDMMYYYY(date: Date): string {
   const dd = String(date.getDate()).padStart(2, "0");
@@ -78,6 +89,8 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
   let prisma: InstanceType<typeof import("../src/generated/prisma/client.ts").PrismaClient>;
   let app: Awaited<ReturnType<typeof import("../src/app.ts").buildApp>>;
   let TEST_USER_ID: string;
+  let SESSION_COOKIE_NAME: string;
+  let testUserSessionToken: string;
 
   const createdExpenseIds: string[] = [];
   const createdCategoryIds: string[] = [];
@@ -98,8 +111,12 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
     await seed(prisma);
     TEST_USER_ID = seededId;
 
-    const { buildApp } = await import("../src/app.ts");
+    const { buildApp, SESSION_COOKIE_NAME: cookieName } = await import("../src/app.ts");
+    SESSION_COOKIE_NAME = cookieName;
     app = buildApp({ prismaClient: prisma });
+
+    const { token } = await createSession(prisma, TEST_USER_ID);
+    testUserSessionToken = token;
   });
 
   afterEach(async () => {
@@ -114,8 +131,9 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
   });
 
   afterAll(async () => {
-    // Closing the app disconnects the injected Prisma client too (Block 4's plugin `onClose` hook)
-    // -- no separate `prisma.$disconnect()` needed/possible after this.
+    // Must run BEFORE `app.close()`: that call disconnects the injected `prisma` client (Block 4's
+    // plugin `onClose` hook), and no query can run against it afterwards.
+    await prisma.session.deleteMany({ where: { userId: TEST_USER_ID } });
     await app.close();
   });
 
@@ -126,7 +144,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: rawInput },
       });
 
@@ -191,7 +209,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: rawInput },
       });
 
@@ -203,8 +221,8 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
     });
   });
 
-  describe("AC-03 -- no header / unknown header -> 401, nothing persisted", () => {
-    it("401s with no x-user-id header and creates no row", async () => {
+  describe("AC-03 -- no cookie / unknown cookie -> 401, nothing persisted", () => {
+    it("401s with no session cookie and creates no row", async () => {
       const rawInput = `café 1500 - ${randomUUID()}`;
 
       const response = await app.inject({
@@ -220,13 +238,13 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       expect(count).toBe(0);
     });
 
-    it("401s with an x-user-id that matches no user and creates no row (same generic body)", async () => {
+    it("401s with a session cookie that matches no session and creates no row (same generic body)", async () => {
       const rawInput = `café 1500 - ${randomUUID()}`;
 
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": UNKNOWN_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: UNKNOWN_SESSION_TOKEN },
         payload: { input: rawInput },
       });
 
@@ -251,7 +269,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: rawInput },
       });
 
@@ -287,7 +305,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const firstResponse = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: firstInput },
       });
       expect(firstResponse.statusCode).toBe(201);
@@ -312,7 +330,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const secondResponse = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: secondInput },
       });
       expect(secondResponse.statusCode).toBe(201);
@@ -346,7 +364,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: rawInput },
       });
 
@@ -370,7 +388,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload: { input: rawInput },
       });
 
@@ -396,7 +414,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       const response = await app.inject({
         method: "POST",
         url: "/expenses",
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         payload,
       });
 
@@ -441,11 +459,14 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
   });
 
   describe("GET /expenses -- end-to-end (Block 5, spec-FEAT-003a)", () => {
-    // Two extra real users, disjoint from the seeded TEST_USER_ID -- `authPreHandler` requires an
-    // existing user row, so a random, never-created id would 401 instead of exercising the
-    // 200-empty-list (AC-04) and per-user isolation (AC-01) paths below.
+    // Two extra real users, disjoint from the seeded TEST_USER_ID -- `authPreHandler` (Block 7,
+    // spec-FEAT-004a) requires a valid session cookie, resolved to a userId via a real `Session`
+    // row, so a random/never-created id (or a user with no session) would 401 instead of
+    // exercising the 200-empty-list (AC-04) and per-user isolation (AC-01) paths below.
     let OTHER_USER_ID: string;
     let NO_EXPENSES_USER_ID: string;
+    let otherUserSessionToken: string;
+    let noExpensesUserSessionToken: string;
     const createdUserIds: string[] = [];
 
     beforeAll(async () => {
@@ -476,10 +497,16 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         },
       });
       createdUserIds.push(OTHER_USER_ID, NO_EXPENSES_USER_ID);
+
+      otherUserSessionToken = (await createSession(prisma, OTHER_USER_ID)).token;
+      noExpensesUserSessionToken = (await createSession(prisma, NO_EXPENSES_USER_ID)).token;
     });
 
     afterAll(async () => {
       if (createdUserIds.length > 0) {
+        // Session rows first -- deleting the User row while its Session still points at it would
+        // violate the FK (`Session.userId -> User.id` has no `onDelete: Cascade`, Block 1).
+        await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
         await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
         createdUserIds.length = 0;
       }
@@ -503,7 +530,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
           const response = await app.inject({
             method: "POST",
             url: "/expenses",
-            headers: { "x-user-id": TEST_USER_ID },
+            cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
             payload: { input },
           });
           expect(response.statusCode).toBe(201);
@@ -522,7 +549,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const listResponse = await app.inject({
           method: "GET",
           url: "/expenses",
-          headers: { "x-user-id": TEST_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         });
 
         expect(listResponse.statusCode).toBe(200);
@@ -545,7 +572,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const response = await app.inject({
           method: "GET",
           url: "/expenses",
-          headers: { "x-user-id": NO_EXPENSES_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: noExpensesUserSessionToken },
         });
 
         expect(response.statusCode).toBe(200);
@@ -570,7 +597,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
           const response = await app.inject({
             method: "POST",
             url: "/expenses",
-            headers: { "x-user-id": TEST_USER_ID },
+            cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
             payload: { input },
           });
           expect(response.statusCode).toBe(201);
@@ -589,7 +616,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const response = await app.inject({
           method: "GET",
           url: "/expenses?limit=2",
-          headers: { "x-user-id": TEST_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         });
 
         expect(response.statusCode).toBe(200);
@@ -607,7 +634,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const response = await app.inject({
           method: "GET",
           url: `/expenses?${query}`,
-          headers: { "x-user-id": TEST_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         });
 
         expect(response.statusCode).toBe(400);
@@ -623,7 +650,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const mineResponse = await app.inject({
           method: "POST",
           url: "/expenses",
-          headers: { "x-user-id": TEST_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
           payload: { input: mineInput },
         });
         expect(mineResponse.statusCode).toBe(201);
@@ -631,7 +658,7 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const theirsResponse = await app.inject({
           method: "POST",
           url: "/expenses",
-          headers: { "x-user-id": OTHER_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: otherUserSessionToken },
           payload: { input: theirsInput },
         });
         expect(theirsResponse.statusCode).toBe(201);
@@ -648,12 +675,12 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
         const mineList = await app.inject({
           method: "GET",
           url: "/expenses",
-          headers: { "x-user-id": TEST_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
         });
         const theirsList = await app.inject({
           method: "GET",
           url: "/expenses",
-          headers: { "x-user-id": OTHER_USER_ID },
+          cookies: { [SESSION_COOKIE_NAME]: otherUserSessionToken },
         });
 
         const mineIds = mineList.json().expenses.map((expense: { id: string }) => expense.id);
