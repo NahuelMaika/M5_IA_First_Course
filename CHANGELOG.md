@@ -38,6 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and error states, wired together on one screen — newly created expenses insert into the list at
   their correct `when`-descending position without a reload. CORS enabled on `apps/api`
   (`@fastify/cors`, `WEB_ORIGIN` validated with Zod) so the browser can reach it.
+- [QUICK-001] `apps/api` `dev` script (`node --env-file=../../.env --experimental-strip-types
+  --watch src/server.ts`) — `pnpm dev` at the repo root now starts the API alongside `apps/web`
+  instead of skipping it.
 
 ### Changed
 
