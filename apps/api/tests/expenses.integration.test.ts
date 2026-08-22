@@ -1,5 +1,7 @@
 /**
  * Block 11 (spec-FEAT-002) -- end-to-end integration tests for `POST /expenses`.
+ * Block 5 (spec-FEAT-003a) adds the sibling end-to-end tests for `GET /expenses` below, reusing
+ * the same `app`/`prisma`/`TEST_USER_ID` fixtures and cleanup convention documented in this header.
  *
  * Exercises the FULL app (`buildApp` with a real `PrismaClient`, adapter-driven, pointed at
  * `DATABASE_URL_TEST`) through `fastify.inject` -- no mocks of `parseExpense`, `resolveCategoryName`
@@ -26,6 +28,12 @@
  * `afterEach`, never a blanket statement. This file follows that same, already-established
  * convention instead of the spec text's literal `TRUNCATE` suggestion, for exactly the reason those
  * sibling files document. The 11 predefined categories and `TEST_USER_ID` are never touched.
+ *
+ * One deliberate exception to "by its own id, never a blanket statement": the `GET /expenses`
+ * describe below clears `TEST_USER_ID`'s expenses by `userId` (not by tracked id) once in its own
+ * `beforeAll`, as a defensive guard against an orphan row a failed assertion elsewhere in this file
+ * could have left untracked -- see the comment at that call site for the full reasoning. It is
+ * still scoped to one user and one table, never a cross-file `TRUNCATE`.
  *
  * Every test that needs a unique, locatable row embeds a `randomUUID()` either in the free-text
  * description (after the ` - ` separator, which `parseExpense` never re-parses) or, for category
@@ -66,7 +74,7 @@ function formatDDMMYYYY(date: Date): string {
   return `${dd}/${mm}/${yyyy}`;
 }
 
-describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
+describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-003a)", () => {
   let prisma: InstanceType<typeof import("../src/generated/prisma/client.ts").PrismaClient>;
   let app: Awaited<ReturnType<typeof import("../src/app.ts").buildApp>>;
   let TEST_USER_ID: string;
@@ -326,7 +334,13 @@ describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
 
   describe("AC-07 -- unknown marker + indeterminate amount rejects everything, category not created", () => {
     it("422s and creates no category for the unresolved marker", async () => {
-      const markerName = randomUUID();
+      // `-` only survives inside a token between two LETTERS (tokenize.ts) -- a raw `randomUUID()`
+      // has hyphens next to digits too, so it gets torn into separate tokens and some of those
+      // loose digit fragments can compete as a spurious Monto candidate, turning this into a
+      // false 201 instead of the 422 this test exists to prove. Same fix as AC-04/AC-05: stripping
+      // the hyphens keeps it one token that can never match the all-digit amount pattern, while
+      // staying unique per run.
+      const markerName = randomUUID().replaceAll("-", "");
       const rawInput = `kiosco #${markerName}`;
 
       const response = await app.inject({
@@ -423,6 +437,225 @@ describe("POST /expenses -- end-to-end (Block 11, spec-FEAT-002)", () => {
       } finally {
         await prisma.$executeRaw`DELETE FROM categories WHERE id = ${firstId}::uuid`;
       }
+    });
+  });
+
+  describe("GET /expenses -- end-to-end (Block 5, spec-FEAT-003a)", () => {
+    // Two extra real users, disjoint from the seeded TEST_USER_ID -- `authPreHandler` requires an
+    // existing user row, so a random, never-created id would 401 instead of exercising the
+    // 200-empty-list (AC-04) and per-user isolation (AC-01) paths below.
+    let OTHER_USER_ID: string;
+    let NO_EXPENSES_USER_ID: string;
+    const createdUserIds: string[] = [];
+
+    beforeAll(async () => {
+      // Defensive cleanup: TEST_USER_ID's expenses are always supposed to be empty between tests
+      // (each POST test above tracks its own row in `createdExpenseIds` and `afterEach` deletes it
+      // by id) -- but a sibling test elsewhere in this file that throws before reaching its own
+      // `createdExpenseIds.push(...)` call (e.g. an assertion failing before the cleanup-tracking
+      // line runs) can leave an orphan row behind. The `FR-03 -- limit bounds the result` test below
+      // asserts on an EXACT top-N by `when`, so any leftover row for TEST_USER_ID would silently
+      // corrupt that assertion. Clearing here, once, before this describe's own fixtures run, keeps
+      // this block's tests deterministic regardless of what happened earlier in the file.
+      await prisma.expense.deleteMany({ where: { userId: TEST_USER_ID } });
+
+      OTHER_USER_ID = randomUUID();
+      NO_EXPENSES_USER_ID = randomUUID();
+      await prisma.user.create({
+        data: { id: OTHER_USER_ID, email: `other-${OTHER_USER_ID}@ggasia.local` },
+      });
+      await prisma.user.create({
+        data: { id: NO_EXPENSES_USER_ID, email: `no-expenses-${NO_EXPENSES_USER_ID}@ggasia.local` },
+      });
+      createdUserIds.push(OTHER_USER_ID, NO_EXPENSES_USER_ID);
+    });
+
+    afterAll(async () => {
+      if (createdUserIds.length > 0) {
+        await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+        createdUserIds.length = 0;
+      }
+    });
+
+    describe("AC-01 -- real ordering by `when`, not load order", () => {
+      it("returns three expenses loaded out of when-order, sorted by when descending", async () => {
+        const marker = randomUUID();
+        const today = new Date();
+        const oneDayAgo = new Date();
+        oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+        const threeDaysAgo = new Date();
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+
+        const oldestInput = `kiosco 100 ${formatDDMMYYYY(threeDaysAgo)} - order ${marker} oldest`;
+        const newestInput = `kiosco 100 ${formatDDMMYYYY(today)} - order ${marker} newest`;
+        const middleInput = `kiosco 100 ${formatDDMMYYYY(oneDayAgo)} - order ${marker} middle`;
+
+        // Load order deliberately mismatches `when` order: oldest first, then newest, then middle.
+        for (const input of [oldestInput, newestInput, middleInput]) {
+          const response = await app.inject({
+            method: "POST",
+            url: "/expenses",
+            headers: { "x-user-id": TEST_USER_ID },
+            payload: { input },
+          });
+          expect(response.statusCode).toBe(201);
+        }
+
+        const [oldest, newest, middle] = await Promise.all(
+          [oldestInput, newestInput, middleInput].map((rawInput) =>
+            prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } }),
+          ),
+        );
+        if (!oldest || !newest || !middle) {
+          throw new Error("expected all three expenses to have been persisted");
+        }
+        createdExpenseIds.push(oldest.id, newest.id, middle.id);
+
+        const listResponse = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          headers: { "x-user-id": TEST_USER_ID },
+        });
+
+        expect(listResponse.statusCode).toBe(200);
+        const ids = listResponse.json().expenses.map((expense: { id: string }) => expense.id);
+
+        const newestIndex = ids.indexOf(newest.id);
+        const middleIndex = ids.indexOf(middle.id);
+        const oldestIndex = ids.indexOf(oldest.id);
+
+        expect(newestIndex).toBeGreaterThanOrEqual(0);
+        expect(middleIndex).toBeGreaterThanOrEqual(0);
+        expect(oldestIndex).toBeGreaterThanOrEqual(0);
+        expect(newestIndex).toBeLessThan(middleIndex);
+        expect(middleIndex).toBeLessThan(oldestIndex);
+      });
+    });
+
+    describe("AC-04 -- a user with no expenses", () => {
+      it("returns 200 with an empty list", async () => {
+        const response = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          headers: { "x-user-id": NO_EXPENSES_USER_ID },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({ expenses: [] });
+      });
+    });
+
+    describe("FR-03 -- limit bounds the result", () => {
+      it("returns exactly `limit` expenses, the most recent by when", async () => {
+        const marker = randomUUID();
+        const oldestDate = new Date();
+        oldestDate.setDate(oldestDate.getDate() - 5);
+        const middleDate = new Date();
+        middleDate.setDate(middleDate.getDate() - 2);
+        const newestDate = new Date();
+
+        const oldestInput = `kiosco 100 ${formatDDMMYYYY(oldestDate)} - limit ${marker} oldest`;
+        const middleInput = `kiosco 100 ${formatDDMMYYYY(middleDate)} - limit ${marker} middle`;
+        const newestInput = `kiosco 100 ${formatDDMMYYYY(newestDate)} - limit ${marker} newest`;
+
+        for (const input of [oldestInput, middleInput, newestInput]) {
+          const response = await app.inject({
+            method: "POST",
+            url: "/expenses",
+            headers: { "x-user-id": TEST_USER_ID },
+            payload: { input },
+          });
+          expect(response.statusCode).toBe(201);
+        }
+
+        const [oldest, middle, newest] = await Promise.all(
+          [oldestInput, middleInput, newestInput].map((rawInput) =>
+            prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } }),
+          ),
+        );
+        if (!oldest || !middle || !newest) {
+          throw new Error("expected all three expenses to have been persisted");
+        }
+        createdExpenseIds.push(oldest.id, middle.id, newest.id);
+
+        const response = await app.inject({
+          method: "GET",
+          url: "/expenses?limit=2",
+          headers: { "x-user-id": TEST_USER_ID },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const ids = response.json().expenses.map((expense: { id: string }) => expense.id);
+        expect(ids).toEqual([newest.id, middle.id]);
+      });
+    });
+
+    describe("AC-02 -- invalid `limit` query param", () => {
+      it.each([
+        { label: "limit=0 (below the minimum)", query: "limit=0" },
+        { label: "limit=201 (above the maximum)", query: "limit=201" },
+        { label: "limit=abc (not numeric)", query: "limit=abc" },
+      ])("$label -> 400 against the real app, no query-level side effect", async ({ query }) => {
+        const response = await app.inject({
+          method: "GET",
+          url: `/expenses?${query}`,
+          headers: { "x-user-id": TEST_USER_ID },
+        });
+
+        expect(response.statusCode).toBe(400);
+      });
+    });
+
+    describe("AC-01 -- per-user isolation", () => {
+      it("a user's expenses never appear in another user's list", async () => {
+        const marker = randomUUID();
+        const mineInput = `kiosco 100 - isolation ${marker} mine`;
+        const theirsInput = `kiosco 100 - isolation ${marker} theirs`;
+
+        const mineResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          headers: { "x-user-id": TEST_USER_ID },
+          payload: { input: mineInput },
+        });
+        expect(mineResponse.statusCode).toBe(201);
+
+        const theirsResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          headers: { "x-user-id": OTHER_USER_ID },
+          payload: { input: theirsInput },
+        });
+        expect(theirsResponse.statusCode).toBe(201);
+
+        const [mine, theirs] = await Promise.all([
+          prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput: mineInput } }),
+          prisma.expense.findFirst({ where: { userId: OTHER_USER_ID, rawInput: theirsInput } }),
+        ]);
+        if (!mine || !theirs) {
+          throw new Error("expected both expenses to have been persisted");
+        }
+        createdExpenseIds.push(mine.id, theirs.id);
+
+        const mineList = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          headers: { "x-user-id": TEST_USER_ID },
+        });
+        const theirsList = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          headers: { "x-user-id": OTHER_USER_ID },
+        });
+
+        const mineIds = mineList.json().expenses.map((expense: { id: string }) => expense.id);
+        const theirsIds = theirsList.json().expenses.map((expense: { id: string }) => expense.id);
+
+        expect(mineIds).toContain(mine.id);
+        expect(mineIds).not.toContain(theirs.id);
+        expect(theirsIds).toContain(theirs.id);
+        expect(theirsIds).not.toContain(mine.id);
+      });
     });
   });
 });

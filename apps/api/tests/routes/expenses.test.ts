@@ -10,6 +10,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "../../src/generated/prisma/client.ts";
 
 // Some of these tests are the first in the process to transform/load the compiled
 // `@ggasia/domain` module through `vi.mock`'s dynamic `importOriginal`, which can take longer
@@ -30,6 +31,17 @@ vi.mock("@ggasia/domain", async (importOriginal) => {
   return {
     ...actual,
     parseExpense: vi.fn(actual.parseExpense),
+  };
+});
+
+// `GET /expenses` tests (Block 4, spec-FEAT-003a) exercise the route layer only: `listExpenses`
+// (Block 3) already has its own dedicated test suite, so it is mocked here to isolate query
+// validation and HTTP response mapping without re-testing ordering/repository concerns.
+vi.mock("../../src/services/expense-service.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/services/expense-service.ts")>();
+  return {
+    ...actual,
+    listExpenses: vi.fn(),
   };
 });
 
@@ -283,6 +295,186 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     expect(response.json()).toEqual({ error: "internal_error" });
     expect(response.body).not.toContain("Prisma exploded");
     expect(response.body).not.toContain("db.internal");
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+});
+
+describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 200 with the serialized expense list (AC-01)", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const when = new Date("2026-08-15T12:00:00.000Z");
+    vi.mocked(listExpenses).mockResolvedValue({
+      outcome: "listed",
+      expenses: [
+        {
+          id: "11111111-2222-3333-4444-555555555555",
+          amount: new Prisma.Decimal("1500"),
+          place: "café",
+          when,
+          category: "Comida",
+          categoryOrigin: "automatica",
+          description: "",
+          name: "café",
+          type: "Personal",
+          currency: "ARS",
+        },
+      ],
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      headers: { "x-user-id": TEST_USER_ID },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.expenses).toHaveLength(1);
+    expect(body.expenses[0]).toMatchObject({
+      id: "11111111-2222-3333-4444-555555555555",
+      amount: "1500.00",
+      place: "café",
+      category: "Comida",
+      categoryOrigin: "automatica",
+      description: "",
+      name: "café",
+      type: "Personal",
+      currency: "ARS",
+    });
+    expect(body.expenses[0].when).toBe(when.toISOString());
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("invokes the service with limit 50 when the query param is absent", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(listExpenses).mockResolvedValue({ outcome: "listed", expenses: [] });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      headers: { "x-user-id": TEST_USER_ID },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(listExpenses).toHaveBeenCalledWith(expect.any(Object), TEST_USER_ID, 50);
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("invokes the service with the requested limit at both range edges (limit=200, limit=1)", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(listExpenses).mockResolvedValue({ outcome: "listed", expenses: [] });
+
+    const responseUpper = await app.inject({
+      method: "GET",
+      url: "/expenses?limit=200",
+      headers: { "x-user-id": TEST_USER_ID },
+    });
+    expect(responseUpper.statusCode).toBe(200);
+    expect(listExpenses).toHaveBeenLastCalledWith(expect.any(Object), TEST_USER_ID, 200);
+
+    const responseLower = await app.inject({
+      method: "GET",
+      url: "/expenses?limit=1",
+      headers: { "x-user-id": TEST_USER_ID },
+    });
+    expect(responseLower.statusCode).toBe(200);
+    expect(listExpenses).toHaveBeenLastCalledWith(expect.any(Object), TEST_USER_ID, 1);
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 400 without invoking the service for limit=0, limit=201 and limit=abc (AC-02)", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    for (const invalidLimit of ["0", "201", "abc"]) {
+      const response = await app.inject({
+        method: "GET",
+        url: `/expenses?limit=${invalidLimit}`,
+        headers: { "x-user-id": TEST_USER_ID },
+      });
+      expect(response.statusCode).toBe(400);
+    }
+    expect(listExpenses).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 401 without invoking the service when x-user-id is missing (AC-03)", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({ method: "GET", url: "/expenses" });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(listExpenses).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 401 with the same generic body when x-user-id belongs to no user (AC-03)", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      headers: { "x-user-id": UNKNOWN_USER_ID },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(listExpenses).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 500 without leaking the internal error when the service reports internal_error", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(listExpenses).mockResolvedValue({ outcome: "internal_error" });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      headers: { "x-user-id": TEST_USER_ID },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: "internal_error" });
 
     await app.close();
   }, TEST_TIMEOUT_MS);

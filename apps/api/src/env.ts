@@ -19,6 +19,19 @@ const envSchema = z.object({
     }),
   APP_TIMEZONE: z.string().min(1),
   API_PORT: z.coerce.number().int().positive(),
+  // The only origin @fastify/cors is allowed to authorize (spec-FEAT-003b Block 2). PRD.md ->
+  // "Riesgos y Dependencias" requires apps/web and apps/api to ship as two services on distinct
+  // domains, so the API must declare a single authorized origin -- a trailing slash or a path
+  // would never equal the browser's `Origin` header (which is always scheme+host+port, nothing
+  // else), so both are rejected here rather than left to fail closed silently at request time.
+  WEB_ORIGIN: z
+    .url()
+    .refine((url) => !url.endsWith("/"), {
+      message: "WEB_ORIGIN must not have a trailing slash -- see this field's comment in env.ts",
+    })
+    .refine((url) => new URL(url).pathname === "/", {
+      message: "WEB_ORIGIN must not include a path -- see this field's comment in env.ts",
+    }),
 });
 
 export type Env = z.infer<typeof envSchema>;

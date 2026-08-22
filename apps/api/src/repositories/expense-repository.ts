@@ -41,3 +41,27 @@ export async function create(prisma: PrismaClient, data: CreateExpenseInput): Pr
     },
   });
 }
+
+/**
+ * An expense row with its `category` relation resolved (spec-FEAT-003a Block 2) -- the read path
+ * uses an `include` to get the category name in the same query, unlike the POST path (which
+ * already has it in memory when it writes).
+ */
+export type ExpenseWithCategory = Prisma.ExpenseGetPayload<{ include: { category: true } }>;
+
+export interface FindManyForUserParams {
+  userId: string;
+  limit: number;
+}
+
+export async function findManyForUser(
+  prisma: PrismaClient,
+  { userId, limit }: FindManyForUserParams,
+): Promise<ExpenseWithCategory[]> {
+  return prisma.expense.findMany({
+    where: { userId },
+    orderBy: [{ when: "desc" }, { createdAt: "desc" }],
+    take: limit,
+    include: { category: true },
+  });
+}
