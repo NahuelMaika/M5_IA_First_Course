@@ -20,6 +20,7 @@ import { Prisma } from "../generated/prisma/client.ts";
 import type { Expense, PrismaClient } from "../generated/prisma/client.ts";
 import * as categoryRepository from "../repositories/category-repository.ts";
 import * as expenseRepository from "../repositories/expense-repository.ts";
+import type { ExpenseWithCategory } from "../repositories/expense-repository.ts";
 
 type RejectionReason = RejectedExpense["reason"];
 
@@ -38,9 +39,40 @@ export interface ExpenseServiceDeps {
   logger?: MinimalLogger;
 }
 
+/**
+ * One expense row in the shape the listing endpoint (Block 4) serializes -- `category` is already
+ * the resolved name (never `categoryId`), same precedent as `createExpense`'s `category: string`.
+ * `amount` stays a `Prisma.Decimal` and `when` a `Date`: the string/ISO conversion is the route's
+ * job (Block 4), not the service's, mirroring `createExpense`. Deliberately excludes `rawInput` --
+ * the listing never echoes the user's free-text input back.
+ */
+export interface ExpenseListItem {
+  id: string;
+  amount: Prisma.Decimal;
+  place: string;
+  when: Date;
+  category: string;
+  categoryOrigin: Expense["categoryOrigin"];
+  description: string;
+  name: string;
+  type: Expense["type"];
+  currency: string;
+}
+
+/**
+ * `createExpense`'s result union stays separate from `listExpenses`'s (below) rather than one
+ * shared "god union" -- otherwise every caller of either function would need to handle branches
+ * (`"rejected"` for a read, `"listed"` for a write) that can never actually happen for it, and
+ * the existing `POST /expenses` route (Block 10, spec-FEAT-002) would stop narrowing correctly
+ * the moment a new outcome variant is added here for an unrelated operation.
+ */
 export type ExpenseServiceResult =
   | { outcome: "created"; expense: Expense; category: string }
   | { outcome: "rejected"; reason: RejectionReason }
+  | { outcome: "internal_error" };
+
+export type ListExpensesResult =
+  | { outcome: "listed"; expenses: ExpenseListItem[] }
   | { outcome: "internal_error" };
 
 interface CategoryResolution {
@@ -139,6 +171,43 @@ export async function createExpense(
     // docblock's "no raw category-marker name, ever leaves this module"), since it carries the
     // user's free-text input.
     deps.logger?.error({ err: error }, "expense creation failed with an internal error");
+    return { outcome: "internal_error" };
+  }
+}
+
+function mapExpenseRow(row: ExpenseWithCategory): ExpenseListItem {
+  return {
+    id: row.id,
+    amount: row.amount,
+    place: row.place,
+    when: row.when,
+    category: row.category.name,
+    categoryOrigin: row.categoryOrigin,
+    description: row.description,
+    name: row.name,
+    type: row.type,
+    currency: row.currency,
+  };
+}
+
+/**
+ * Lists `userId`'s expenses, most recent `when` first (ordering is `findManyForUser`'s
+ * responsibility -- Block 2 -- this function never reorders what it gets back). `userId` and
+ * `limit` are trusted as already validated by upper layers (auth + the route's Zod schema,
+ * Block 4): no revalidation, no default, no clamp here -- see module docblock's rationale for why
+ * duplicating a validated rule in two layers is worse than trusting the boundary once.
+ */
+export async function listExpenses(
+  deps: ExpenseServiceDeps,
+  userId: string,
+  limit: number,
+): Promise<ListExpensesResult> {
+  try {
+    const rows = await expenseRepository.findManyForUser(deps.prisma, { userId, limit });
+    return { outcome: "listed", expenses: rows.map(mapExpenseRow) };
+  } catch (error) {
+    // Same log hygiene as `createExpense`'s catch block: the real error, never raw expense data.
+    deps.logger?.error({ err: error }, "expense listing failed with an internal error");
     return { outcome: "internal_error" };
   }
 }

@@ -6,6 +6,20 @@ allowBuilds:
   prisma: true
 minimumReleaseAgeExclude:
   - fastify@5.12.1
+  # next@16.3.2 and its per-platform swc binaries: FEAT-003b pins the exact version AGENTS.md
+  # declares (Next.js 16), published recently enough to trip pnpm's minimum-release-age gate.
+  # Pinned to this exact version rather than excluded by name, so a later next release stays
+  # gated -- this doesn't reopen the check for future versions.
+  - '@next/env@16.3.2'
+  - '@next/swc-darwin-arm64@16.3.2'
+  - '@next/swc-darwin-x64@16.3.2'
+  - '@next/swc-linux-arm64-gnu@16.3.2'
+  - '@next/swc-linux-arm64-musl@16.3.2'
+  - '@next/swc-linux-x64-gnu@16.3.2'
+  - '@next/swc-linux-x64-musl@16.3.2'
+  - '@next/swc-win32-arm64-msvc@16.3.2'
+  - '@next/swc-win32-x64-msvc@16.3.2'
+  - next@16.3.2
 # GHSA-ggr8-5vv4-36mx: deepmerge-ts <8.0.0 has stack exhaustion merging recursive object
 # graphs. Pulled transitively via @prisma/config (prisma CLI's config loader) — Prisma has not
 # yet released a version that bumps it, so pinned here until upstream catches up.

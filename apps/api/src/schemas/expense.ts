@@ -14,3 +14,21 @@ export const createExpenseBodySchema = z.object({
 });
 
 export type CreateExpenseBody = z.infer<typeof createExpenseBodySchema>;
+
+/**
+ * Zod validation for the GET /expenses request query (spec-FEAT-003a Block 4) -- the first query
+ * param validated in the repo; everything else so far validates `body`.
+ *
+ * `limit` arrives as a querystring value, always a string (or absent). `z.coerce.number()` turns
+ * that string into a number before `.int()` and the range check run, so a decimal like "1.5"
+ * coerces to `1.5` and still fails `.int()` -- it is rejected, never silently truncated (FR-03: no
+ * value gets adjusted in silence). A non-numeric string like "abc" coerces to `NaN`, which fails
+ * every subsequent check. `.default(50)` only applies when the key is absent from the query object
+ * entirely -- Zod's default only fires on `undefined`, so it never overrides an explicit invalid
+ * value.
+ */
+export const listExpensesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+export type ListExpensesQuery = z.infer<typeof listExpensesQuerySchema>;
