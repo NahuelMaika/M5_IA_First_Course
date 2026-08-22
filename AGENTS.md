@@ -29,6 +29,8 @@ transcription.
 
 **Reference PRD:** `docs/daw/prd/PRD.md`
 
+<!-- daw:declined FEAT-004 coverage-threshold -->
+
 ---
 
 ## Stack
