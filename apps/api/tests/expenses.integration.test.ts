@@ -462,10 +462,18 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       OTHER_USER_ID = randomUUID();
       NO_EXPENSES_USER_ID = randomUUID();
       await prisma.user.create({
-        data: { id: OTHER_USER_ID, email: `other-${OTHER_USER_ID}@ggasia.local` },
+        data: {
+          id: OTHER_USER_ID,
+          email: `other-${OTHER_USER_ID}@ggasia.local`,
+          passwordHash: "test-hash",
+        },
       });
       await prisma.user.create({
-        data: { id: NO_EXPENSES_USER_ID, email: `no-expenses-${NO_EXPENSES_USER_ID}@ggasia.local` },
+        data: {
+          id: NO_EXPENSES_USER_ID,
+          email: `no-expenses-${NO_EXPENSES_USER_ID}@ggasia.local`,
+          passwordHash: "test-hash",
+        },
       });
       createdUserIds.push(OTHER_USER_ID, NO_EXPENSES_USER_ID);
     });

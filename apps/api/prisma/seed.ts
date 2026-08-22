@@ -23,6 +23,7 @@ import { pathToFileURL } from "node:url";
 
 import { normalize } from "@ggasia/categorization";
 import { PrismaPg } from "@prisma/adapter-pg";
+import argon2 from "argon2";
 
 import { PrismaClient } from "../src/generated/prisma/client.ts";
 
@@ -45,12 +46,21 @@ export const PREDEFINED_CATEGORY_NAMES = [
 // Fixed, known id/email for the test user this seed provides in place of a real auth ticket.
 export const TEST_USER_ID = "00000000-0000-4000-8000-000000000001";
 export const TEST_USER_EMAIL = "test-user@ggasia.local";
+// Fixed test password, used ONLY to seed the local/test user above -- never a real credential.
+// Documented here in plain text on purpose (spec-FEAT-004a Block 1) so local/test logins against
+// this seeded user are reproducible; hashed with argon2 before it ever reaches the database.
+const TEST_USER_PASSWORD = "test-password-only-for-seed";
 
 async function upsertTestUser(prisma: PrismaClient): Promise<void> {
+  const passwordHash = await argon2.hash(TEST_USER_PASSWORD);
+
   await prisma.user.upsert({
     where: { id: TEST_USER_ID },
-    update: {},
-    create: { id: TEST_USER_ID, email: TEST_USER_EMAIL },
+    // Also re-set on conflict, not just on create: this is what corrects the migration's
+    // placeholder `password_hash` (spec-FEAT-004a Block 1's migration.sql) back to the real,
+    // documented test password's hash on the very next seed run after that migration applies.
+    update: { passwordHash },
+    create: { id: TEST_USER_ID, email: TEST_USER_EMAIL, passwordHash },
   });
 }
 

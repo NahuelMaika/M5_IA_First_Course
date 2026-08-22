@@ -119,7 +119,11 @@ describe("expenseRepository.findManyForUser (Block 2, spec-FEAT-003a)", () => {
     // A second real user, disjoint from the seeded TEST_USER_ID, to prove per-user isolation.
     OTHER_USER_ID = randomUUID();
     await prisma.user.create({
-      data: { id: OTHER_USER_ID, email: `other-${OTHER_USER_ID}@ggasia.local` },
+      data: {
+        id: OTHER_USER_ID,
+        email: `other-${OTHER_USER_ID}@ggasia.local`,
+        passwordHash: "test-hash",
+      },
     });
     createdUserIds.push(OTHER_USER_ID);
   });
