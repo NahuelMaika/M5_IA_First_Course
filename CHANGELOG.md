@@ -27,6 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and persists the expense in PostgreSQL (`User`/`Category`/`Expense`, partial unique indexes
   for category-name uniqueness). Seeded with kb.md's 11 predefined categories and a fixed test
   user.
+- [QUICK-001] `apps/api` `dev` script (`node --env-file=../../.env --experimental-strip-types
+  --watch src/server.ts`) — `pnpm dev` at the repo root now starts the API alongside `apps/web`
+  instead of skipping it.
 
 ### Changed
 
