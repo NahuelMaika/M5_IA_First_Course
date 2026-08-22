@@ -1,20 +1,22 @@
 /**
- * Auth stub `preHandler` (spec-FEAT-002 Block 6).
+ * Auth `preHandler` (spec-FEAT-004a Block 7 -- rewrite of spec-FEAT-002 Block 6's stub).
  *
- * Not a plugin registered globally -- it is a plain Fastify `preHandler` function, exported for
- * `POST /expenses` (Block 10, not implemented yet) to register on its own route. This block only
- * creates and tests it in isolation.
- *
- * Reads the `x-user-id` header and resolves it via `userRepository.findById(prisma, id)`, using
- * `request.server.prisma` (decorated by Block 4's plugin) -- never a parameter passed in
- * separately. If the header is missing/empty OR the user does not exist, responds 401 with the
- * SAME generic body `{ error: "unauthorized" }` in both cases (threat-FEAT-002.md mitigation #3:
- * do not confirm/deny which ids are valid). On success, decorates `request.userId` with the
- * validated id and lets the chain continue (no explicit `done()` call needed -- Fastify only keeps
- * running the chain if this preHandler does not send a reply).
+ * Reads the session cookie (`SESSION_COOKIE_NAME`, exported by `app.ts`, Block 6) via
+ * `request.cookies` and resolves it with `session-repository.findValid(request.server.prisma,
+ * token)` -- called directly, never through a service, same precedent as the previous version
+ * calling `user-repository.findById` directly (confirmed during PLAN's architecture audit). The
+ * header this preHandler used to trust is no longer read anywhere in this file
+ * (threat-FEAT-004a.md mitigation R5): it never authenticated anything real to begin with, and now
+ * it authenticates nothing at all. If the cookie is absent OR the token does not resolve to a
+ * valid, non-expired session, responds 401
+ * with the SAME generic body `{ error: "unauthorized" }` in both cases -- no branch distinguishes
+ * the reason (same principle the stub already applied). On success, decorates `request.userId` and
+ * lets the chain continue (no explicit `done()` call needed -- Fastify only keeps running the chain
+ * if this preHandler does not send a reply).
  */
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { findById } from "../repositories/user-repository.ts";
+import { findValid } from "../repositories/session-repository.ts";
+import { SESSION_COOKIE_NAME } from "../app.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -25,20 +27,19 @@ declare module "fastify" {
 const UNAUTHORIZED_BODY = { error: "unauthorized" } as const;
 
 export async function authPreHandler(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const header = request.headers["x-user-id"];
-  const userId = typeof header === "string" && header.length > 0 ? header : undefined;
+  const token = request.cookies[SESSION_COOKIE_NAME];
 
-  if (!userId) {
+  if (!token) {
     reply.code(401).send(UNAUTHORIZED_BODY);
     return;
   }
 
-  const user = await findById(request.server.prisma, userId);
+  const session = await findValid(request.server.prisma, token);
 
-  if (!user) {
+  if (!session) {
     reply.code(401).send(UNAUTHORIZED_BODY);
     return;
   }
 
-  request.userId = user.id;
+  request.userId = session.userId;
 }
