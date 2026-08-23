@@ -20,11 +20,38 @@ interface FakeCategory {
   active: boolean;
 }
 
-function fakePrismaClient(seedCategories: FakeCategory[]) {
+/**
+ * One row in the fake `expense` table backing `findFirst`/`update`/`delete` (spec-FEAT-005a
+ * Block 4). Deliberately flat (`categoryId`, no nested `category`) -- same shape Prisma itself
+ * stores; the nested `category` relation is synthesized on read by `update`/`findFirst` just like
+ * a real `include: { category: true }` would, by looking `categoryId` up in the `categories`
+ * store below.
+ */
+interface FakeExpenseRecord {
+  id: string;
+  userId: string;
+  amount: string;
+  place: string;
+  when: Date;
+  categoryId: string;
+  categoryOrigin: string;
+  description: string;
+  name: string;
+  type: string;
+  currency: string;
+  rawInput: string;
+  channel: string;
+  createdAt: Date;
+}
+
+function fakePrismaClient(seedCategories: FakeCategory[], seedExpenses: FakeExpenseRecord[] = []) {
   const categories: FakeCategory[] = [...seedCategories];
-  const expenses: unknown[] = [];
+  const expenses: Record<string, unknown>[] = seedExpenses.map((e) => ({ ...e }));
   let expenseCreateImpl: ((data: unknown) => unknown) | null = null;
   let expenseFindManyImpl: ((args: unknown) => unknown) | null = null;
+  let expenseFindFirstImpl: ((args: unknown) => unknown) | null = null;
+  let expenseUpdateImpl: ((args: unknown) => unknown) | null = null;
+  let expenseDeleteImpl: ((args: unknown) => unknown) | null = null;
 
   return {
     __state: { categories, expenses },
@@ -33,6 +60,15 @@ function fakePrismaClient(seedCategories: FakeCategory[]) {
     },
     __setExpenseFindManyImpl(impl: ((args: unknown) => unknown) | null) {
       expenseFindManyImpl = impl;
+    },
+    __setExpenseFindFirstImpl(impl: ((args: unknown) => unknown) | null) {
+      expenseFindFirstImpl = impl;
+    },
+    __setExpenseUpdateImpl(impl: ((args: unknown) => unknown) | null) {
+      expenseUpdateImpl = impl;
+    },
+    __setExpenseDeleteImpl(impl: ((args: unknown) => unknown) | null) {
+      expenseDeleteImpl = impl;
     },
     category: {
       findMany: vi.fn(async ({ where }: { where: { OR: Array<{ ownerId: string | null }> } }) => {
@@ -90,7 +126,67 @@ function fakePrismaClient(seedCategories: FakeCategory[]) {
         }
         return [];
       }),
+      findFirst: vi.fn(async (args: { where: { id: string; userId: string } }) => {
+        if (expenseFindFirstImpl) {
+          return expenseFindFirstImpl(args);
+        }
+        const found = expenses.find(
+          (e) => e.id === args.where.id && e.userId === args.where.userId,
+        );
+        return found ?? null;
+      }),
+      update: vi.fn(
+        async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+          if (expenseUpdateImpl) {
+            return expenseUpdateImpl(args);
+          }
+          const idx = expenses.findIndex((e) => e.id === args.where.id);
+          if (idx === -1) {
+            throw new Error("Fake Prisma: An operation failed because it depends on one or more records that were required but not found. (P2025)");
+          }
+          expenses[idx] = { ...expenses[idx], ...args.data };
+          const categoryId = expenses[idx].categoryId as string;
+          const category = categories.find((c) => c.id === categoryId) ?? null;
+          return { ...expenses[idx], category };
+        },
+      ),
+      delete: vi.fn(async (args: { where: { id: string } }) => {
+        if (expenseDeleteImpl) {
+          return expenseDeleteImpl(args);
+        }
+        const idx = expenses.findIndex((e) => e.id === args.where.id);
+        if (idx === -1) {
+          throw new Error("Fake Prisma: An operation failed because it depends on one or more records that were required but not found. (P2025)");
+        }
+        const [removed] = expenses.splice(idx, 1);
+        return removed;
+      }),
     },
+  };
+}
+
+/**
+ * Seeds one flat expense row (spec-FEAT-005a Block 4) -- the shape `findByIdForUser`/`update`/
+ * `remove` operate on, distinct from `fakeExpenseRow` above (which nests a resolved `category`,
+ * the shape `findManyForUser`'s `include` produces for `listExpenses`).
+ */
+function fakeExpenseSeed(overrides: Partial<FakeExpenseRecord> = {}): FakeExpenseRecord {
+  return {
+    id: randomUUID(),
+    userId: TEST_USER_ID,
+    amount: "1500.00",
+    place: "café",
+    when: new Date("2026-08-10T00:00:00.000Z"),
+    categoryId: randomUUID(),
+    categoryOrigin: "automatica",
+    description: "",
+    name: "café",
+    type: "Personal",
+    currency: "ARS",
+    rawInput: "café 1500",
+    channel: "texto",
+    createdAt: new Date("2026-08-10T12:00:00.000Z"),
+    ...overrides,
   };
 }
 
@@ -465,6 +561,276 @@ describe("expenseService.listExpenses (Block 3, spec-FEAT-003a)", () => {
     // row or the caller's raw arguments, so a future change that starts attaching row data to
     // this log call fails here instead of leaking silently.
     expect(loggedObj).toEqual({ err: thrown });
+    expect(typeof loggedMsg).toBe("string");
+  });
+});
+
+const OTHER_USER_ID = "22222222-2222-2222-2222-222222222222";
+
+describe("expenseService.updateExpense (Block 4, spec-FEAT-005a)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("updates Amount/Place/Date of the user's own expense (AC-01)", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const { Prisma } = await import("../../src/generated/prisma/client.ts");
+    const categories = seedFor();
+    const ownCategoryId = categories[0].id;
+    const expense = fakeExpenseSeed({ categoryId: ownCategoryId });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      {
+        amount: new Prisma.Decimal("2500.00"),
+        place: "Nuevo lugar",
+        when: new Date("2026-08-15T00:00:00.000Z"),
+      },
+    );
+
+    expect(result.outcome).toBe("updated");
+    if (result.outcome === "updated") {
+      expect(result.expense).toMatchObject({
+        place: "Nuevo lugar",
+        when: new Date("2026-08-15T00:00:00.000Z"),
+      });
+      expect(result.expense.amount.toString()).toBe("2500");
+    }
+  });
+
+  it("returns 'not_found' for a nonexistent expense", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const prisma = fakePrismaClient(seedFor());
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      randomUUID(),
+      { place: "Nuevo lugar" },
+    );
+
+    expect(result).toEqual({ outcome: "not_found" });
+  });
+
+  it("returns 'not_found' for another user's expense (AC-02)", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const expense = fakeExpenseSeed({ userId: OTHER_USER_ID, categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { place: "Nuevo lugar" },
+    );
+
+    expect(result).toEqual({ outcome: "not_found" });
+  });
+
+  it("preserves the current category when the patch only carries 'place' (AC-03)", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const ownCategoryId = categories[0].id;
+    const expense = fakeExpenseSeed({ categoryId: ownCategoryId });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { place: "Nuevo lugar" },
+    );
+
+    expect(result.outcome).toBe("updated");
+    if (result.outcome === "updated") {
+      expect(result.expense.categoryId).toBe(ownCategoryId);
+    }
+    expect(prisma.category.findMany).not.toHaveBeenCalled();
+  });
+
+  it("reassigns the category when the patch carries a valid categoryId (AC-04)", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor([{ ownerId: TEST_USER_ID, name: "Otra" }]);
+    const originalCategoryId = categories[0].id;
+    const newCategoryId = categories[1].id;
+    const expense = fakeExpenseSeed({ categoryId: originalCategoryId });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { categoryId: newCategoryId },
+    );
+
+    expect(result.outcome).toBe("updated");
+    if (result.outcome === "updated") {
+      expect(result.expense.categoryId).toBe(newCategoryId);
+    }
+  });
+
+  it("returns 'invalid_category' for a categoryId belonging to another user or a nonexistent predefined one", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const expense = fakeExpenseSeed({ categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+    const foreignCategoryId = randomUUID();
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { categoryId: foreignCategoryId },
+    );
+
+    expect(result).toEqual({ outcome: "invalid_category" });
+    expect(prisma.expense.update).not.toHaveBeenCalled();
+  });
+
+  it("never invokes resolveCategoryName/createCategorizer", async () => {
+    const categorization = await import("@ggasia/categorization");
+    const resolveSpy = vi.spyOn(categorization, "resolveCategoryName");
+    const createCategorizerSpy = vi.spyOn(categorization, "createCategorizer");
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor([{ ownerId: TEST_USER_ID, name: "Otra" }]);
+    const expense = fakeExpenseSeed({ categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { categoryId: categories[1].id },
+    );
+    await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { place: "Otro lugar" },
+    );
+
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(createCategorizerSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns 'internal_error' and logs without exposing the real error, given a simulated Prisma failure", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const expense = fakeExpenseSeed({ categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+    const thrown = new Error("Prisma exploded: connection refused at db.internal:5432");
+    prisma.__setExpenseUpdateImpl(() => {
+      throw thrown;
+    });
+    const logger = { error: vi.fn() };
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never, logger },
+      TEST_USER_ID,
+      expense.id,
+      { place: "Nuevo lugar" },
+    );
+
+    expect(result).toEqual({ outcome: "internal_error" });
+    expect(JSON.stringify(result)).not.toContain("Prisma exploded");
+    expect(JSON.stringify(result)).not.toContain("db.internal");
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    const [loggedObj, loggedMsg] = logger.error.mock.calls[0] as [unknown, string];
+    expect(loggedObj).toMatchObject({ err: thrown });
+    expect(typeof loggedMsg).toBe("string");
+  });
+});
+
+describe("expenseService.deleteExpense (Block 4, spec-FEAT-005a)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("deletes the user's own expense (AC-05)", async () => {
+    const { deleteExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const expense = fakeExpenseSeed({ categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await deleteExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+    );
+
+    expect(result).toEqual({ outcome: "deleted" });
+    expect(prisma.__state.expenses.find((e) => e.id === expense.id)).toBeUndefined();
+  });
+
+  it("returns 'not_found' for a nonexistent expense", async () => {
+    const { deleteExpense } = await import("../../src/services/expense-service.ts");
+    const prisma = fakePrismaClient(seedFor());
+
+    const result = await deleteExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      randomUUID(),
+    );
+
+    expect(result).toEqual({ outcome: "not_found" });
+  });
+
+  it("returns 'not_found' for another user's expense (AC-07)", async () => {
+    const { deleteExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const expense = fakeExpenseSeed({ userId: OTHER_USER_ID, categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await deleteExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+    );
+
+    expect(result).toEqual({ outcome: "not_found" });
+    expect(prisma.__state.expenses.find((e) => e.id === expense.id)).toBeDefined();
+  });
+
+  it("returns 'internal_error' and logs without exposing the real error, given a simulated Prisma failure", async () => {
+    const { deleteExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const expense = fakeExpenseSeed({ categoryId: categories[0].id });
+    const prisma = fakePrismaClient(categories, [expense]);
+    const thrown = new Error("Prisma exploded: connection refused at db.internal:5432");
+    prisma.__setExpenseDeleteImpl(() => {
+      throw thrown;
+    });
+    const logger = { error: vi.fn() };
+
+    const result = await deleteExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never, logger },
+      TEST_USER_ID,
+      expense.id,
+    );
+
+    expect(result).toEqual({ outcome: "internal_error" });
+    expect(JSON.stringify(result)).not.toContain("Prisma exploded");
+    expect(JSON.stringify(result)).not.toContain("db.internal");
+    expect(logger.error).toHaveBeenCalledTimes(1);
+    const [loggedObj, loggedMsg] = logger.error.mock.calls[0] as [unknown, string];
+    expect(loggedObj).toMatchObject({ err: thrown });
     expect(typeof loggedMsg).toBe("string");
   });
 });
