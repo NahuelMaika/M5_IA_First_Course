@@ -268,3 +268,131 @@ describe("expenseRepository.findManyForUser (Block 2, spec-FEAT-003a)", () => {
     ).rejects.toThrow(thrown);
   });
 });
+
+describe("expenseRepository.findByIdForUser / update / remove (Block 2, spec-FEAT-005a)", () => {
+  let prisma: InstanceType<typeof import("../../src/generated/prisma/client.ts").PrismaClient>;
+  let TEST_USER_ID: string;
+  let OTHER_USER_ID: string;
+  let categoryId: string;
+
+  const createdExpenseIds: string[] = [];
+  const createdUserIds: string[] = [];
+
+  beforeAll(async () => {
+    const { PrismaClient } = await import("../../src/generated/prisma/client.ts");
+    const { PrismaPg } = await import("@prisma/adapter-pg");
+    const adapter = new PrismaPg({ connectionString: TEST_DATABASE_URL });
+    prisma = new PrismaClient({ adapter });
+
+    const { seed, TEST_USER_ID: seededId } = await import("../../prisma/seed.ts");
+    await seed(prisma);
+    TEST_USER_ID = seededId;
+
+    const { findPredefinedByName } = await import(
+      "../../src/repositories/category-repository.ts"
+    );
+    const comida = await findPredefinedByName(prisma, "Comida");
+    if (!comida) {
+      throw new Error("Expected the seeded 'Comida' predefined category to exist.");
+    }
+    categoryId = comida.id;
+
+    // A second real user, disjoint from the seeded TEST_USER_ID, to prove ownership isolation
+    // (mitigation R1 of the threat model).
+    OTHER_USER_ID = randomUUID();
+    await prisma.user.create({
+      data: {
+        id: OTHER_USER_ID,
+        email: `other-${OTHER_USER_ID}@ggasia.local`,
+        passwordHash: "test-hash",
+      },
+    });
+    createdUserIds.push(OTHER_USER_ID);
+  });
+
+  afterEach(async () => {
+    if (createdExpenseIds.length > 0) {
+      await prisma.expense.deleteMany({ where: { id: { in: createdExpenseIds } } });
+      createdExpenseIds.length = 0;
+    }
+  });
+
+  afterAll(async () => {
+    if (createdUserIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+      createdUserIds.length = 0;
+    }
+    await prisma.$disconnect();
+  });
+
+  /** Persists one fixture expense via the already-tested `create()`, tracked for `afterEach` cleanup. */
+  async function makeExpense(overrides: {
+    userId?: string;
+  }): Promise<import("../../src/generated/prisma/client.ts").Expense> {
+    const { create } = await import("../../src/repositories/expense-repository.ts");
+    const { Prisma } = await import("../../src/generated/prisma/client.ts");
+
+    const expense = await create(prisma, {
+      userId: overrides.userId ?? TEST_USER_ID,
+      amount: new Prisma.Decimal("100.00"),
+      place: "Fixture place",
+      when: new Date("2026-08-12T12:00:00.000Z"),
+      categoryId,
+      categoryOrigin: "automatica",
+      description: "",
+      name: "Fixture place",
+      type: "Personal",
+      currency: "ARS",
+      rawInput: `fixture 100 - ${randomUUID()}`,
+      channel: "texto",
+    });
+    createdExpenseIds.push(expense.id);
+    return expense;
+  }
+
+  it("findByIdForUser returns the expense when id and userId match", async () => {
+    const { findByIdForUser } = await import("../../src/repositories/expense-repository.ts");
+    const expense = await makeExpense({});
+
+    const result = await findByIdForUser(prisma, { id: expense.id, userId: TEST_USER_ID });
+
+    expect(result?.id).toBe(expense.id);
+  });
+
+  it("findByIdForUser returns null when the id does not exist", async () => {
+    const { findByIdForUser } = await import("../../src/repositories/expense-repository.ts");
+
+    const result = await findByIdForUser(prisma, { id: randomUUID(), userId: TEST_USER_ID });
+
+    expect(result).toBeNull();
+  });
+
+  it("findByIdForUser returns null when the id exists but belongs to another userId", async () => {
+    const { findByIdForUser } = await import("../../src/repositories/expense-repository.ts");
+    const expense = await makeExpense({ userId: OTHER_USER_ID });
+
+    const result = await findByIdForUser(prisma, { id: expense.id, userId: TEST_USER_ID });
+
+    expect(result).toBeNull();
+  });
+
+  it("update persists the passed fields and returns the included category", async () => {
+    const { update } = await import("../../src/repositories/expense-repository.ts");
+    const expense = await makeExpense({});
+
+    const updated = await update(prisma, expense.id, { place: "Nuevo lugar" });
+
+    expect(updated.place).toBe("Nuevo lugar");
+    expect(updated.category.name).toBe("Comida");
+  });
+
+  it("remove deletes the row, so a later lookup by that id finds nothing", async () => {
+    const { remove, findByIdForUser } = await import("../../src/repositories/expense-repository.ts");
+    const expense = await makeExpense({});
+
+    await remove(prisma, expense.id);
+
+    const result = await findByIdForUser(prisma, { id: expense.id, userId: TEST_USER_ID });
+    expect(result).toBeNull();
+  });
+});
