@@ -13,12 +13,17 @@
  * by `apps/api` on login (requires `apps/api`'s CORS config to allow credentials, see Block 1).
  */
 
-function readRequiredEnvVar(name: "NEXT_PUBLIC_API_URL"): string {
-  const value = process.env[name];
+function readRequiredEnvVar(): string {
+  // Literal dot-notation access, on purpose (FIX-001): Next.js only inlines NEXT_PUBLIC_* vars
+  // into the browser bundle when it finds this exact shape during its static build analysis -- a
+  // dynamic bracket lookup keyed by a variable is invisible to that analysis, so the var never
+  // gets inlined and every call from the browser throws before `fetch` runs. See
+  // docs/daw/specs/rca-FIX-001.md.
+  const value = process.env.NEXT_PUBLIC_API_URL;
 
   if (!value) {
     throw new Error(
-      `${name} is not configured. Set it in apps/web/.env.local (see apps/web/.env.example).`,
+      "NEXT_PUBLIC_API_URL is not configured. Set it in apps/web/.env.local (see apps/web/.env.example).",
     );
   }
 
@@ -35,7 +40,7 @@ function readRequiredEnvVar(name: "NEXT_PUBLIC_API_URL"): string {
  * value.
  */
 export async function apiRequest(path: string, init: RequestInit = {}): Promise<Response> {
-  const baseUrl = readRequiredEnvVar("NEXT_PUBLIC_API_URL");
+  const baseUrl = readRequiredEnvVar();
 
   const headers = new Headers(init.headers);
 
