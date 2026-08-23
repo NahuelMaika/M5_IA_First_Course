@@ -10,8 +10,8 @@
 
 | Sub-ticket | Title | PRD | Dependencies | Status |
 |---|---|---|---|---|
-| FEAT-004a | Registro, login y logout — API | prd-FEAT-004a.md | none | active |
-| FEAT-004b | Registro, login y logout — UI | prd-FEAT-004b.md | depends on a | pending |
+| FEAT-004a | Registro, login y logout — API | prd-FEAT-004a.md | none | done — PR #7 draft opened (github.com/NahuelMaika/M5_IA_First_Course/pull/7), se mergea a feat/FEAT-003b-expenses-ui cuando se apruebe; FEAT-004b puede ramificar desde feat/FEAT-004a-auth-api sin esperar ese merge |
+| FEAT-004b | Registro, login y logout — UI | prd-FEAT-004b.md | depends on a | active |
 
 ## Suggested implementation order
 a → b
