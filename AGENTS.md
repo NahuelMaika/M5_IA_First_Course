@@ -29,8 +29,6 @@ transcription.
 
 **Reference PRD:** `docs/daw/prd/PRD.md`
 
-<!-- daw:declined FEAT-004 coverage-threshold -->
-
 ---
 
 ## Stack
@@ -49,6 +47,8 @@ files and **propose the text for you to paste here**. You always confirm it.
 | Database | PostgreSQL + Prisma 7 (requires the `citext` extension) |
 | Test runner | Vitest 4 — one `vitest.config.ts` per workspace |
 | Package manager | pnpm workspaces (monorepo) |
+| Typecheck | `pnpm -r typecheck` (per-workspace `tsc`) |
+| Coverage threshold | 90% lines/branches/functions in `packages/domain` and `packages/categorization` (stricter than DAW's 80% default) |
 
 ---
 
