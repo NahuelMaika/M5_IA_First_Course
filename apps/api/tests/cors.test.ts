@@ -92,6 +92,27 @@ describe("CORS (Block 2, spec-FEAT-003b)", () => {
     await app.close();
   });
 
+  it("GET /expenses includes Access-Control-Allow-Credentials: true (Block 1, spec-FEAT-004b)", async () => {
+    const { listExpenses } = await import("../src/services/expense-service.ts");
+    const { buildApp } = await import("../src/app.ts");
+    vi.mocked(listExpenses).mockResolvedValue({ outcome: "listed", expenses: [] });
+
+    // biome-ignore-next: fake client only exposes the methods authPreHandler exercises.
+    const app = buildApp({ prismaClient: fakePrismaClient() as never, webOrigin: TEST_WEB_ORIGIN });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      headers: { origin: TEST_WEB_ORIGIN },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-credentials"]).toBe("true");
+
+    await app.close();
+  });
+
   it("preflight OPTIONS /expenses declares GET and POST explicitly in Access-Control-Allow-Methods, not Fastify's GET,HEAD,POST default", async () => {
     const { buildApp } = await import("../src/app.ts");
     // biome-ignore-next: fake client only exposes the methods the Prisma plugin calls.
