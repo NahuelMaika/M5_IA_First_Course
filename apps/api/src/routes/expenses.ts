@@ -13,9 +13,17 @@
  * issuing its own Prisma query.
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { Prisma } from "../generated/prisma/client.ts";
 import { authPreHandler } from "../plugins/auth.ts";
-import { createExpenseBodySchema, listExpensesQuerySchema } from "../schemas/expense.ts";
-import { createExpense, listExpenses } from "../services/expense-service.ts";
+import {
+  createExpenseBodySchema,
+  expenseIdParamsSchema,
+  listExpensesQuerySchema,
+  updateExpenseBodySchema,
+} from "../schemas/expense.ts";
+import type { UpdateExpenseBody } from "../schemas/expense.ts";
+import { createExpense, deleteExpense, listExpenses, updateExpense } from "../services/expense-service.ts";
+import type { UpdateExpensePatch } from "../services/expense-service.ts";
 
 async function handleCreateExpense(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const bodyResult = createExpenseBodySchema.safeParse(request.body);
@@ -122,6 +130,145 @@ async function handleListExpenses(request: FastifyRequest, reply: FastifyReply):
   });
 }
 
+/**
+ * Maps the Zod-validated `PATCH /expenses/:id` body (`UpdateExpenseBody`) to the shape
+ * `expenseService.updateExpense` expects (`UpdateExpensePatch`, an alias of the repository's
+ * `UpdateExpenseInput`). Only `amount` needs a real conversion -- the schema parses it as a
+ * `number`, while the repository (and NFR-02) require a `Prisma.Decimal`, same precedent as
+ * `handleCreateExpense`'s own `parsed.amount` handling in `expense-service.ts`. Every other field
+ * carries over unchanged. Built key-by-key (never a blind `{...body}`) so an absent field is
+ * genuinely absent from the patch, not present with an `undefined` value -- `updateExpense`'s
+ * `patch.categoryId !== undefined` check (Block 4) and the repository's Prisma `data` object both
+ * depend on that distinction.
+ */
+function toUpdatePatch(body: UpdateExpenseBody): UpdateExpensePatch {
+  const patch: UpdateExpensePatch = {};
+  if (body.amount !== undefined) {
+    patch.amount = new Prisma.Decimal(body.amount.toFixed(2));
+  }
+  if (body.place !== undefined) {
+    patch.place = body.place;
+  }
+  if (body.when !== undefined) {
+    patch.when = body.when;
+  }
+  if (body.categoryId !== undefined) {
+    patch.categoryId = body.categoryId;
+  }
+  return patch;
+}
+
+/**
+ * `PATCH /expenses/:id` route (spec-FEAT-005a Block 6).
+ *
+ * Chains `authPreHandler` -> `:id` UUID validation -> Zod body validation against
+ * `updateExpenseBodySchema` (Block 1) -> `expenseService.updateExpense` (Block 4) -> HTTP response
+ * mapping. The 200 response reuses the same FR-13 shape as `handleCreateExpense`'s -- `category` is
+ * the resolved name off the `category` relation `updateExpense`'s "updated" result already includes
+ * (`ExpenseWithCategory`), never a second Prisma query.
+ */
+async function handleUpdateExpense(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const paramsResult = expenseIdParamsSchema.safeParse(request.params);
+
+  if (!paramsResult.success) {
+    reply.code(400).send({ error: "validation_error", details: paramsResult.error.issues });
+    return;
+  }
+
+  const bodyResult = updateExpenseBodySchema.safeParse(request.body);
+
+  if (!bodyResult.success) {
+    reply.code(400).send({ error: "validation_error", details: bodyResult.error.issues });
+    return;
+  }
+
+  const userId = request.userId;
+
+  if (!userId) {
+    // Defensive only: see `handleCreateExpense`'s identical branch.
+    reply.code(401).send({ error: "unauthorized" });
+    return;
+  }
+
+  const result = await updateExpense(
+    { prisma: request.server.prisma, logger: request.log },
+    userId,
+    paramsResult.data.id,
+    toUpdatePatch(bodyResult.data),
+  );
+
+  if (result.outcome === "not_found") {
+    reply.code(404).send({ error: "not_found" });
+    return;
+  }
+
+  if (result.outcome === "invalid_category") {
+    reply.code(422).send({ error: "invalid_category" });
+    return;
+  }
+
+  if (result.outcome === "internal_error") {
+    // No route-local log here: same reasoning as `handleCreateExpense`'s 500 branch -- the service
+    // already logged the real error via the `logger` dep just passed above.
+    reply.code(500).send({ error: "internal_error" });
+    return;
+  }
+
+  const { expense } = result;
+
+  reply.code(200).send({
+    amount: expense.amount.toFixed(2),
+    place: expense.place,
+    when: expense.when,
+    category: expense.category.name,
+    categoryOrigin: expense.categoryOrigin,
+    description: expense.description,
+    name: expense.name,
+    type: expense.type,
+    currency: expense.currency,
+  });
+}
+
+/**
+ * `DELETE /expenses/:id` route (spec-FEAT-005a Block 6). Chains `authPreHandler` -> `:id` UUID
+ * validation -> `expenseService.deleteExpense` (Block 4) -> HTTP response mapping. Success replies
+ * 204 with no body (FR-05/RF-44 -- physical delete).
+ */
+async function handleDeleteExpense(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const paramsResult = expenseIdParamsSchema.safeParse(request.params);
+
+  if (!paramsResult.success) {
+    reply.code(400).send({ error: "validation_error", details: paramsResult.error.issues });
+    return;
+  }
+
+  const userId = request.userId;
+
+  if (!userId) {
+    // Defensive only: see `handleCreateExpense`'s identical branch.
+    reply.code(401).send({ error: "unauthorized" });
+    return;
+  }
+
+  const result = await deleteExpense(
+    { prisma: request.server.prisma, logger: request.log },
+    userId,
+    paramsResult.data.id,
+  );
+
+  if (result.outcome === "not_found") {
+    reply.code(404).send({ error: "not_found" });
+    return;
+  }
+
+  if (result.outcome === "internal_error") {
+    reply.code(500).send({ error: "internal_error" });
+    return;
+  }
+
+  reply.code(204).send();
+}
+
 export async function expensesRoutes(app: FastifyInstance): Promise<void> {
   app.route({
     method: "POST",
@@ -135,5 +282,19 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
     url: "/expenses",
     preHandler: [authPreHandler],
     handler: handleListExpenses,
+  });
+
+  app.route({
+    method: "PATCH",
+    url: "/expenses/:id",
+    preHandler: [authPreHandler],
+    handler: handleUpdateExpense,
+  });
+
+  app.route({
+    method: "DELETE",
+    url: "/expenses/:id",
+    preHandler: [authPreHandler],
+    handler: handleDeleteExpense,
   });
 }

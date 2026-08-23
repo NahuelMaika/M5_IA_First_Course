@@ -107,3 +107,8 @@ export const updateExpenseBodySchema = z
   });
 
 export type UpdateExpenseBody = z.infer<typeof updateExpenseBodySchema>;
+
+/** Validates the `:id` route param on PATCH/DELETE /expenses/:id (spec-FEAT-005a Block 6). */
+export const expenseIdParamsSchema = z.object({ id: z.string().uuid() });
+
+export type ExpenseIdParams = z.infer<typeof expenseIdParamsSchema>;
