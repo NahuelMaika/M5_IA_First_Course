@@ -19,6 +19,12 @@ vi.mock("@/lib/api/client", () => ({
 vi.mock("@/lib/notifications/notifications", () => ({
   notify: vi.fn(),
 }));
+// `page.tsx` also mounts Block 6's `LogoutButton`, which calls `useRouter()` -- without this mock,
+// every full-page render below fails with "invariant expected app router to be mounted".
+const mockedPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockedPush }),
+}));
 
 const mockedApiRequest = vi.mocked(apiRequest);
 
@@ -208,14 +214,23 @@ describe("Page — full screen (Block 9)", () => {
     await screen.findByRole("list", { name: /gastos/i });
 
     // The list already has data (no empty-state button) and loaded successfully (no retry
-    // button), so the screen's only interactive controls are the form's textarea and its submit
-    // button -- confirmed by counting every native focusable element on the page.
+    // button), so the screen's interactive controls are Block 6's `LogoutButton` plus the form's
+    // textarea and its submit button -- confirmed by counting every native focusable element on
+    // the page.
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(2);
+    expect(focusableElements).toHaveLength(3);
+
+    // Neither `LogoutButton` nor the form's controls set an explicit `tabIndex`, so tab order
+    // follows DOM order. In `page.tsx`, `<LogoutButton/>` sits in the header row above
+    // `<ExpenseForm/>`, so it is reached first, followed by the textarea and then the submit
+    // button.
+    expect(focusableElements[0]).toHaveAccessibleName(/cerrar sesión/i);
+    expect(focusableElements[1].tagName).toBe("TEXTAREA");
+    expect(focusableElements[2]).toHaveAttribute("type", "submit");
 
     for (const element of focusableElements) {
       await user.tab();
@@ -262,14 +277,14 @@ describe("Page — full screen (Block 9)", () => {
     render(<Page />);
     await screen.findByRole("list", { name: /gastos/i });
 
-    // Same universe as AC-14: the list already has data, so the screen's only interactive
-    // controls are the form's textarea and its submit button.
+    // Same universe as AC-14: the list already has data, so the screen's interactive controls
+    // are `LogoutButton` plus the form's textarea and its submit button.
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(2);
+    expect(focusableElements).toHaveLength(3);
 
     // jsdom does not run a real layout engine, so pixel geometry (getBoundingClientRect) is
     // never real here -- verify the 24px CSS floor via the Tailwind spacing-scale classes that

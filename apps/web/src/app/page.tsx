@@ -5,6 +5,7 @@ import * as React from "react";
 import { ExpenseForm, type ExpenseFormHandle } from "@/components/expense-form";
 import { ExpenseList } from "@/components/expense-list";
 import type { CreatedExpense } from "@/components/expense-row";
+import { LogoutButton } from "@/components/logout-button";
 
 // Connects `expense-form.tsx` and `expense-list.tsx` on the same screen (Block 9 --
 // spec-FEAT-003b). Two responsibilities live here, on purpose, because they cross the boundary
@@ -19,7 +20,10 @@ export default function Page() {
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-4">
-      <h1 className="text-2xl font-bold">GGasIA</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">GGasIA</h1>
+        <LogoutButton />
+      </div>
       <ExpenseForm ref={formRef} onCreated={setCreatedExpense} />
       <ExpenseList
         newExpense={createdExpense}
