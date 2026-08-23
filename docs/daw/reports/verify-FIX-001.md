@@ -153,3 +153,159 @@ correr `next build` sobre `apps/web` en un test/script y grep-ear el output comp
 compilador real de Next.js), o — si el equipo decide que el test de patrón de fuente es una
 alternativa aceptable — reabrir PLAN para actualizar `fix-FIX-001.md` con esa decisión documentada
 explícitamente, antes de volver a correr VERIFY.
+
+---
+
+## Ronda 2 — re-verificación tras cerrar F-VER-06
+
+| Field | Value |
+|-------|-------|
+| Fecha | 2026-08-23 |
+| Verificador | daw-module-verifier |
+| Motivo | Cierre de F-VER-06 (FAIL de ronda 1): el fix-plan pedía un test de build real de Next.js o inspección del bundle compilado; ronda 1 solo tenía un test de patrón de texto sobre el código fuente. |
+
+### 1. Fix-plan — pasos de la solución
+
+Sin cambios respecto a ronda 1 — `client.ts` no se modificó en esta ronda (solo se reescribió el
+test de regresión y se agregó soporte condicional en `next.config.ts`).
+
+- ✅ Paso 1 y paso 2 del fix-plan: siguen implementados idénticos a como se verificó en ronda 1
+  (`client.ts:16-31` y `client.ts:43`).
+
+### 2. Regression test (F-VER-06) — reproducido independientemente
+
+Se leyó el test nuevo completo (`client.test.ts:54-100`, describe
+`"readRequiredEnvVar bundle inlining (FIX-001 regression guard)"`) y `next.config.ts` completo.
+
+- ✅ **Ejercita el compilador real de Next.js, no un proxy de texto.** El test corre
+  `execFileSync(".../node_modules/.bin/next", ["build"], { env: { NEXT_BUILD_VERIFY_DIST_DIR,
+  NEXT_PUBLIC_API_URL: probeUrl } })` — un `next build` de producción real — y luego lee los chunks
+  JS compilados en `<distDir>/static/chunks/*.js` con `readFileSync`, buscando el valor literal de
+  `probeUrl` (`http://fix-001-build-verify.invalid:4321`) inlineado en el bundle emitido. Esto es
+  exactamente el tipo de prueba que el fix-plan pedía en el punto 3 de su sección "Tests" y que la
+  RCA usó para confirmar la causa raíz original — ya no es una inspección del patrón de acceso en el
+  código fuente.
+- ✅ **Aislado de `.next`:** `next.config.ts:8-10` solo aplica `distDir:
+  process.env.NEXT_BUILD_VERIFY_DIST_DIR` si esa variable está seteada — condicional, vía spread
+  sobre un objeto vacío en el caso normal. En cualquier `next dev`/`next build` normal (sin esa env
+  var) el override no se activa, así que es inerte por defecto (ver punto 4 abajo).
+
+#### Reproducción independiente (obligatoria para esta ronda)
+
+1. Se guardó el `client.ts` actual (post-fix, HEAD del branch) y se sobrescribió con la versión
+   pre-fix (`git show feat/FEAT-004b-auth-ui:apps/web/src/lib/api/client.ts` —
+   `readRequiredEnvVar(name)` con `process.env[name]`). Diff confirmado línea por línea antes de
+   sobrescribir.
+2. Se corrió `pnpm exec vitest run --pool=threads --testTimeout=150000 -t "bundle inlining"
+   src/lib/api/client.test.ts` desde `apps/web` contra el código pre-fix.
+   - **Resultado: 1 failed, 3 skipped** (el filtro `-t` solo corre el test de bundle inlining). El
+     `next build` real corrió (≈50s) y falló en
+     `expect(inlinedSomewhere).toBe(true)` → `AssertionError: expected false to be true` — el valor
+     de `probeUrl` efectivamente NO aparece en ningún chunk del bundle compilado cuando el código
+     usa acceso dinámico por corchetes. Esto reproduce el bug original contra el compilador real, no
+     contra un mock.
+   - Se confirmó que `.next-fix001-verify` NO quedó en disco tras el `afterEach` incluso con el test
+     en rojo (`ls` → "No such file or directory").
+3. Se restauró `client.ts` a su estado exacto post-fix (`cp` desde la copia guardada) y se confirmó
+   `git diff` vacío sobre el archivo (sin residuo).
+4. Se corrió la suite completa del archivo (`pnpm exec vitest run --pool=threads
+   --testTimeout=150000 src/lib/api/client.test.ts`) contra el código restaurado.
+   - **Resultado: 4 passed (4)** — los 3 tests originales del describe superior más el nuevo
+     regression guard de build, todos en verde.
+   - Se confirmó de nuevo que `.next-fix001-verify` NO quedó en disco tras la corrida exitosa.
+
+- ✅ F-VER-06: el regression test **ejercita el compilador real de Next.js** (no un proxy),
+  **falla antes del fix** (reproducido contra código pre-fix) y **pasa después** (reproducido contra
+  código post-fix). Cierra el FAIL de ronda 1.
+- ✅ F-SPEC-14 (fix con regression test) sigue cumplido, ahora con la prueba que el plan pedía.
+
+### 3. Limpieza del distDir temporal
+
+- ✅ Confirmado en ambos casos (build fallido y build exitoso): no queda ningún directorio
+  `.next-fix001-verify` en `apps/web` tras la ejecución — el `afterEach(() => rmSync(distPath, {
+  recursive: true, force: true }))` se ejecuta incondicionalmente, incluso cuando el `expect` del
+  test falla.
+
+### 4. `next.config.ts` inerte por defecto
+
+- ✅ Confirmado por lectura: el spread condicional (`...(process.env.NEXT_BUILD_VERIFY_DIST_DIR ?
+  {...} : {})`) solo aplica el override de `distDir` cuando esa variable de entorno está presente.
+  Ninguna corrida normal (`pnpm dev`, `pnpm build`, CI, ni la suite completa de Vitest fuera de este
+  test específico) setea `NEXT_BUILD_VERIFY_DIST_DIR`, así que en todo uso normal el objeto
+  spreadeado es `{}` y `next.config.ts` se comporta exactamente como antes de este cambio — no
+  requiere correr `next dev` para confirmarlo, es una propiedad estática del código.
+
+### 5. Suite completa
+
+`pnpm exec vitest run --pool=threads --maxWorkers=2 --testTimeout=150000` desde `apps/web`:
+
+```
+Test Files  14 passed (14)
+     Tests  103 passed (103)
+  Duration  296.45s
+```
+
+- ✅ 103 passed, 0 failed. Sin regresiones. (La suite creció en duración por el `next build` real
+  del nuevo test, esperado y ya anticipado en la consigna de esta ronda.)
+
+### 6. Typecheck
+
+`pnpm run typecheck` (`tsc --noEmit -p tsconfig.json`) desde `apps/web`: sin output, exit limpio.
+
+- ✅ Typecheck limpio (F-VER-05).
+
+### 7. Alcance
+
+`git diff --stat feat/FEAT-004b-auth-ui..HEAD -- apps/web/src apps/web/next.config.ts`:
+
+```
+apps/web/next.config.ts             | 10 ++++++-
+apps/web/src/lib/api/client.test.ts | 52 +++++++++++++++++++++++++++++++++++++
+apps/web/src/lib/api/client.ts      | 13 +++++++---
+```
+
+- ✅ Solo los 3 archivos esperados (más los artefactos de docs de PLAN/CODE/VERIFY, ya revisados en
+  ronda 1 y en el SAST de ronda 2). Sin cambios fuera de alcance.
+
+### 8. Calidad
+
+- ✅ Sin código muerto: el cambio de esta ronda reemplaza un `describe` completo por otro; no deja
+  funciones ni ramas huérfanas.
+- ✅ Imports limpios en `client.test.ts`: `execFileSync`, `existsSync`, `readFileSync`, `readdirSync`,
+  `rmSync`, `join` — los 6 se usan efectivamente en el nuevo describe (confirmado con `rg`).
+- ✅ No es un test frágil en el sentido de W-VER-03 (orden de ejecución, estado global o valores
+  hardcodeados): que dependa de correr `next build` real (filesystem/tiempo) es inherente a lo que
+  el fix-plan pidió verificar — el propio RCA identificó que solo el compilador real puede probar
+  esto — y no una debilidad de diseño del test. No se marca como WARNING por ese motivo.
+
+### Referencia colgante del fix-plan (heredada de ronda 1)
+
+- ⚠️ W-SPEC-05 (equivalente) sigue presente sin resolver: "Ver criterio de finalización" en
+  `fix-FIX-001.md:85` sigue sin sección correspondiente en el documento. No bloquea (es un WARNING,
+  no repite el FAIL de ronda 1) y no forma parte del alcance de esta re-verificación, que se limitó
+  a cerrar F-VER-06.
+
+### Veredicto ronda 2
+
+| Check | ID | Resultado |
+|---|---|---|
+| Regression test ejercita el compilador real de Next.js | F-VER-06 | ✅ (cerrado) |
+| Falla antes del fix, reproducido contra `next build` real | F-VER-06 | ✅ |
+| Pasa después del fix, reproducido contra `next build` real | F-VER-06 | ✅ |
+| Limpieza del distDir temporal (ambos casos) | W-VER-01 (equivalente) | ✅ |
+| `next.config.ts` inerte por defecto | — | ✅ |
+| Suite completa sin regresiones | — | ✅ 103/103 |
+| Typecheck | F-VER-05 | ✅ |
+| Alcance confinado a los 3 archivos esperados | F-VER-02 (equivalente) | ✅ |
+| Sin código muerto / imports limpios | W-VER-01 | ✅ |
+| Test no frágil pese a depender de filesystem/build | W-VER-03 | ✅ (no aplica) |
+| Referencia colgante "criterio de finalización" en el plan | — | ⚠️ WARN (heredado, no bloqueante) |
+
+**Resultado: PASSED.** El FAIL de ronda 1 (F-VER-06) se cerró: el nuevo test corre un `next build`
+de producción real y verifica el bundle compilado emitido, reproducido de forma independiente
+fallando contra el código pre-fix y pasando contra el código post-fix. Sin regresiones en la suite
+completa (103/103), typecheck limpio, alcance confinado a los archivos declarados. Queda 1 WARNING
+no bloqueante heredado (referencia colgante en el fix-plan) que no requiere una nueva ronda de
+VERIFY.
+
+**Siguiente paso:** avanzar a RELEASE.
