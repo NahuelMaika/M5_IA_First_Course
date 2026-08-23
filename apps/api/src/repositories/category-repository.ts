@@ -23,6 +23,35 @@ export async function findVisibleForUser(
   return categories.map((category) => ({ name: category.name, active: category.active }));
 }
 
+export interface VisibleCategoryWithId {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+/**
+ * Same visibility rule as `findVisibleForUser` (predefined + the user's own), but the mapping
+ * includes `id` -- needed by the service layer (spec-FEAT-005a Block 4) to validate a `categoryId`
+ * patch against the categories actually visible to that user (mitigation R2). `findVisibleForUser`
+ * itself is never touched: its `{name, active}` shape is a hard contract with `resolveCategoryName`.
+ */
+export async function findVisibleForUserWithId(
+  prisma: PrismaClient,
+  userId: string,
+): Promise<VisibleCategoryWithId[]> {
+  const categories = await prisma.category.findMany({
+    where: {
+      OR: [{ ownerId: null }, { ownerId: userId }],
+    },
+  });
+
+  return categories.map((category) => ({
+    id: category.id,
+    name: category.name,
+    active: category.active,
+  }));
+}
+
 export interface CreateCategoryInput {
   name: string;
   nameNormalized: string;
