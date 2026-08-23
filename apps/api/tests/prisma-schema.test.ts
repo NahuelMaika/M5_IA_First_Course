@@ -152,12 +152,12 @@ describe("prisma schema (Block 2, spec-FEAT-002)", () => {
         createdUserIds.push(ownerA, ownerB);
 
         await prisma.$executeRaw`
-          INSERT INTO users (id, email, created_at)
-          VALUES (${ownerA}::uuid, ${`owner-a-${ownerA}@test.ggasia.local`}, now())
+          INSERT INTO users (id, email, password_hash, created_at)
+          VALUES (${ownerA}::uuid, ${`owner-a-${ownerA}@test.ggasia.local`}, ${"test-hash"}, now())
         `;
         await prisma.$executeRaw`
-          INSERT INTO users (id, email, created_at)
-          VALUES (${ownerB}::uuid, ${`owner-b-${ownerB}@test.ggasia.local`}, now())
+          INSERT INTO users (id, email, password_hash, created_at)
+          VALUES (${ownerB}::uuid, ${`owner-b-${ownerB}@test.ggasia.local`}, ${"test-hash"}, now())
         `;
 
         const nameNormalized = `test owned ${randomUUID()}`;

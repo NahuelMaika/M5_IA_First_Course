@@ -1,29 +1,44 @@
 /**
- * Block 6 (spec-FEAT-002) -- src/plugins/auth.ts.
+ * Block 7 (spec-FEAT-004a) -- src/plugins/auth.ts rewrite.
  *
- * The `authPreHandler` is not registered on any real route yet (Block 10 does that). To test it in
- * isolation, this suite builds `buildApp()` with an injected FAKE `PrismaClient` (only
- * `user.findUnique` is mocked -- `userRepository.findById` calls exactly that) and registers a
- * minimal test-only route with `authPreHandler` as its `preHandler`, plus a downstream handler spy
- * to prove the chain is cut on every 401 path. No real network/database connection is used.
+ * `authPreHandler` no longer reads `x-user-id` at all (threat-FEAT-004a.md mitigation R5): it
+ * reads the session cookie (`SESSION_COOKIE_NAME`, exported by `src/app.ts`, Block 6) and resolves
+ * it via `session-repository.findValid` directly (same precedent as the previous version calling
+ * `user-repository.findById` directly -- confirmed during PLAN's architecture audit). This suite
+ * injects a FAKE `PrismaClient` (only `session.findUnique` is mocked -- `findValid` calls exactly
+ * that) and registers a minimal test-only route with `authPreHandler` as its `preHandler`, plus a
+ * downstream handler spy to prove the chain is cut on every 401 path. No real network/database
+ * connection is used.
  */
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
-import { buildApp } from "../../src/app.ts";
+import { buildApp, SESSION_COOKIE_NAME } from "../../src/app.ts";
 import { authPreHandler } from "../../src/plugins/auth.ts";
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
-const TEST_USER_EMAIL = "test@ggasia.test";
+const VALID_TOKEN = "valid-raw-session-token";
+const EXPIRED_TOKEN = "expired-raw-session-token";
+const UNKNOWN_TOKEN = "unknown-raw-session-token";
+
+// Same hashing algorithm as `session-repository.ts` (SHA-256 hex digest, threat-FEAT-004a.md R2) --
+// duplicated here rather than imported, same pattern as `session-repository.test.ts`, since the
+// fake DB row has to be keyed by what `findValid` actually looks up.
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
+const FAKE_SESSIONS = [
+  { token: hashToken(VALID_TOKEN), userId: TEST_USER_ID, expiresAt: new Date(Date.now() + 60_000) },
+  { token: hashToken(EXPIRED_TOKEN), userId: TEST_USER_ID, expiresAt: new Date(Date.now() - 60_000) },
+];
 
 function fakePrismaClient() {
   return {
     $connect: vi.fn().mockResolvedValue(undefined),
     $disconnect: vi.fn().mockResolvedValue(undefined),
-    user: {
-      findUnique: vi.fn(async ({ where: { id } }: { where: { id: string } }) => {
-        if (id === TEST_USER_ID) {
-          return { id: TEST_USER_ID, email: TEST_USER_EMAIL };
-        }
-        return null;
+    session: {
+      findUnique: vi.fn(async ({ where: { token } }: { where: { token: string } }) => {
+        return FAKE_SESSIONS.find((session) => session.token === token) ?? null;
       }),
     },
   };
@@ -48,8 +63,8 @@ function buildTestApp() {
   return { app, downstreamHandler };
 }
 
-describe("plugins/auth.ts (Block 6, spec-FEAT-002)", () => {
-  it("responds 401 with the generic body when x-user-id is missing", async () => {
+describe("plugins/auth.ts (Block 7, spec-FEAT-004a)", () => {
+  it("responds 401 with the generic body when there is no session cookie", async () => {
     const { app, downstreamHandler } = buildTestApp();
 
     const response = await app.inject({ method: "GET", url: "/__test-auth" });
@@ -61,13 +76,13 @@ describe("plugins/auth.ts (Block 6, spec-FEAT-002)", () => {
     await app.close();
   });
 
-  it("responds 401 with the SAME generic body when x-user-id belongs to no user", async () => {
+  it("responds 401 with the SAME generic body when the session cookie is invalid/inexistent", async () => {
     const { app, downstreamHandler } = buildTestApp();
 
     const response = await app.inject({
       method: "GET",
       url: "/__test-auth",
-      headers: { "x-user-id": "99999999-9999-9999-9999-999999999999" },
+      cookies: { [SESSION_COOKIE_NAME]: UNKNOWN_TOKEN },
     });
 
     expect(response.statusCode).toBe(401);
@@ -77,13 +92,29 @@ describe("plugins/auth.ts (Block 6, spec-FEAT-002)", () => {
     await app.close();
   });
 
-  it("passes through to the next handler with request.userId set when x-user-id resolves", async () => {
+  it("responds 401 with the SAME generic body when the session cookie is expired", async () => {
     const { app, downstreamHandler } = buildTestApp();
 
     const response = await app.inject({
       method: "GET",
       url: "/__test-auth",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: EXPIRED_TOKEN },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(downstreamHandler).not.toHaveBeenCalled();
+
+    await app.close();
+  });
+
+  it("sets request.userId and lets the chain continue when the session cookie is valid", async () => {
+    const { app, downstreamHandler } = buildTestApp();
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/__test-auth",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_TOKEN },
     });
 
     expect(response.statusCode).toBe(200);
@@ -93,19 +124,19 @@ describe("plugins/auth.ts (Block 6, spec-FEAT-002)", () => {
     await app.close();
   });
 
-  it("never invokes downstream logic on either 401 path", async () => {
-    const missingHeader = buildTestApp();
-    await missingHeader.app.inject({ method: "GET", url: "/__test-auth" });
-    expect(missingHeader.downstreamHandler).not.toHaveBeenCalled();
-    await missingHeader.app.close();
+  it("responds 401 when only x-user-id is sent, without a session cookie (regression -- the header no longer authenticates anything)", async () => {
+    const { app, downstreamHandler } = buildTestApp();
 
-    const unknownUser = buildTestApp();
-    await unknownUser.app.inject({
+    const response = await app.inject({
       method: "GET",
       url: "/__test-auth",
-      headers: { "x-user-id": "99999999-9999-9999-9999-999999999999" },
+      headers: { "x-user-id": TEST_USER_ID },
     });
-    expect(unknownUser.downstreamHandler).not.toHaveBeenCalled();
-    await unknownUser.app.close();
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(downstreamHandler).not.toHaveBeenCalled();
+
+    await app.close();
   });
 });

@@ -38,6 +38,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and error states, wired together on one screen — newly created expenses insert into the list at
   their correct `when`-descending position without a reload. CORS enabled on `apps/api`
   (`@fastify/cors`, `WEB_ORIGIN` validated with Zod) so the browser can reach it.
+- [QUICK-001] `apps/api` `dev` script (`node --env-file=../../.env --experimental-strip-types
+  --watch src/server.ts`) — `pnpm dev` at the repo root now starts the API alongside `apps/web`
+  instead of skipping it.
+- [FEAT-004a] `apps/api` real authentication: `POST /auth/register`, `POST /auth/login`,
+  `POST /auth/logout`, replacing the transitory `x-user-id` header (accepted risk in
+  `docs/daw/security/threat-FEAT-002.md`, now closed — `x-user-id` no longer authenticates
+  anything). Passwords hashed with argon2; sessions backed by a new `Session` table, exposed as
+  an httpOnly cookie whose token is stored SHA-256-hashed (never in plaintext) and whose
+  `secure`/`sameSite` attributes are NODE_ENV-aware. Login is throttled 5 failed attempts per
+  email per 15-minute window (case-insensitive) and timing-safe against email enumeration. See
+  `docs/daw/security/threat-FEAT-004a.md` for the full threat model.
 
 ### Changed
 

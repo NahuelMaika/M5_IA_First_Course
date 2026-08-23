@@ -9,9 +9,11 @@
  * block itself registers no route.
  */
 
+import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import Fastify, { type FastifyInstance } from "fastify";
 import prismaPlugin from "./plugins/prisma.ts";
+import { authRoutes } from "./routes/auth.ts";
 import { expensesRoutes } from "./routes/expenses.ts";
 import type { PrismaClient } from "./generated/prisma/client.ts";
 
@@ -50,6 +52,28 @@ const DEFAULT_TEST_WEB_ORIGIN = "http://localhost:3000";
 // and integration tests calling the app directly (bypassing CORS) never catch it.
 const CORS_METHODS = ["GET", "POST", "PATCH", "DELETE"];
 
+// The name of the session cookie set on `POST /auth/login` (Block 10) and read by the
+// rewritten `authPreHandler` (Block 7).
+export const SESSION_COOKIE_NAME = "ggasia_session";
+
+// Same pattern as `DEFAULT_TEST_WEB_ORIGIN`/`webOrigin` above: production requires explicit,
+// secure attributes; outside production it falls back to a default safe for local dev over
+// plain HTTP.
+export function sessionCookieOptions(): {
+  httpOnly: true;
+  secure: boolean;
+  sameSite: "none" | "lax";
+  path: "/";
+} {
+  const isProduction = process.env["NODE_ENV"] === "production";
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    path: "/",
+  };
+}
+
 export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   let webOrigin = options.webOrigin;
   if (!webOrigin) {
@@ -74,6 +98,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     origin: webOrigin,
     methods: CORS_METHODS,
   });
+  // No `secret` option -- the session token itself is an opaque 256-bit random value,
+  // validated against a SHA-256 hash stored in the DB (threat-FEAT-004a.md's explicit decision
+  // not to sign cookies).
+  app.register(cookie);
+  app.register(authRoutes);
   app.register(expensesRoutes);
 
   return app;

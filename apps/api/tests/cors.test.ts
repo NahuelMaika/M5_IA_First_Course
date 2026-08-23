@@ -15,11 +15,18 @@
  * unit test in this suite (`tests/app.test.ts`, `tests/plugins/auth.test.ts`) that injects a fake
  * `PrismaClient` instead of a real `DATABASE_URL`. Only the sad-path test below exercises `env.ts`
  * directly, same pattern as `tests/env.test.ts`'s own `DATABASE_URL` sad path.
+ *
+ * Block 11 (spec-FEAT-004a) migrated the authenticated `GET /expenses` test below from the dead
+ * `x-user-id` header to a real session cookie: the fake Prisma client now mocks `session.findUnique`
+ * (what `authPreHandler`'s `findValid` actually calls, Block 7) instead of `user.findUnique`, same
+ * pattern as `tests/plugins/auth.test.ts`'s own fake client.
  */
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SESSION_COOKIE_NAME } from "../src/app.ts";
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
-const TEST_USER_EMAIL = "cors-test@ggasia.test";
+const VALID_SESSION_TOKEN = "valid-raw-session-token-for-cors-tests";
 // Deliberately NOT localhost, so a passing assertion proves the header came from configuration
 // (`webOrigin`), not from `buildApp()`'s internal fallback for callers that don't care about CORS.
 const TEST_WEB_ORIGIN = "https://app.ggasia.test";
@@ -32,16 +39,28 @@ vi.mock("../src/services/expense-service.ts", async (importOriginal) => {
   };
 });
 
+// Same hashing algorithm as `session-repository.ts` (SHA-256 hex digest, threat-FEAT-004a.md R2) --
+// duplicated here rather than imported, same pattern as `tests/plugins/auth.test.ts`, since the
+// fake session row has to be keyed by what `findValid` actually looks up.
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
+const FAKE_SESSIONS = [
+  {
+    token: hashToken(VALID_SESSION_TOKEN),
+    userId: TEST_USER_ID,
+    expiresAt: new Date(Date.now() + 60_000),
+  },
+];
+
 function fakePrismaClient() {
   return {
     $connect: vi.fn().mockResolvedValue(undefined),
     $disconnect: vi.fn().mockResolvedValue(undefined),
-    user: {
-      findUnique: vi.fn(async ({ where: { id } }: { where: { id: string } }) => {
-        if (id === TEST_USER_ID) {
-          return { id: TEST_USER_ID, email: TEST_USER_EMAIL };
-        }
-        return null;
+    session: {
+      findUnique: vi.fn(async ({ where: { token } }: { where: { token: string } }) => {
+        return FAKE_SESSIONS.find((session) => session.token === token) ?? null;
       }),
     },
   };
@@ -63,7 +82,8 @@ describe("CORS (Block 2, spec-FEAT-003b)", () => {
     const response = await app.inject({
       method: "GET",
       url: "/expenses",
-      headers: { origin: TEST_WEB_ORIGIN, "x-user-id": TEST_USER_ID },
+      headers: { origin: TEST_WEB_ORIGIN },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
     });
 
     expect(response.statusCode).toBe(200);

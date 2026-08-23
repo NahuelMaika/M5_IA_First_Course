@@ -2,14 +2,21 @@
  * Block 10 (spec-FEAT-002) -- src/routes/expenses.ts.
  *
  * Exercises `POST /expenses` end-to-end at the HTTP layer via `fastify.inject`, with only
- * `PrismaClient` faked (an in-memory `user`/`category`/`expense` store mirroring the shape the
- * real repositories -- Block 8 -- query against). `parseExpense` (from `@ggasia/domain`) and
+ * `PrismaClient` faked (an in-memory `category`/`expense` store mirroring the shape the real
+ * repositories -- Block 8 -- query against). `parseExpense` (from `@ggasia/domain`) and
  * `resolveCategoryName` (from `@ggasia/categorization`) run for real: this is the only layer where
  * the full request -> response chain (auth -> body validation -> service -> HTTP mapping) is
  * proven wired together, per Block 10's Required tests.
+ *
+ * Block 11 (spec-FEAT-004a) migrated every "logged in" request here from the dead `x-user-id`
+ * header to a real session cookie: the fake Prisma client mocks `session.findUnique` (what
+ * `authPreHandler`'s `findValid` actually calls, Block 7) instead of `user.findUnique`, same
+ * pattern as `tests/plugins/auth.test.ts`'s own fake client. It also adds the 3 Required
+ * regression tests proving `x-user-id` alone, without a cookie, no longer authenticates anything.
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { SESSION_COOKIE_NAME } from "../../src/app.ts";
 import { Prisma } from "../../src/generated/prisma/client.ts";
 
 // Some of these tests are the first in the process to transform/load the compiled
@@ -20,8 +27,23 @@ import { Prisma } from "../../src/generated/prisma/client.ts";
 const TEST_TIMEOUT_MS = 60_000;
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
-const TEST_USER_EMAIL = "test@ggasia.test";
-const UNKNOWN_USER_ID = "99999999-9999-9999-9999-999999999999";
+const VALID_SESSION_TOKEN = "valid-raw-session-token-for-route-tests";
+const UNKNOWN_SESSION_TOKEN = "unknown-raw-session-token-for-route-tests";
+
+// Same hashing algorithm as `session-repository.ts` (SHA-256 hex digest, threat-FEAT-004a.md R2) --
+// duplicated here rather than imported, same pattern as `tests/plugins/auth.test.ts`, since the
+// fake session row has to be keyed by what `findValid` actually looks up.
+function hashToken(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex");
+}
+
+const FAKE_SESSIONS = [
+  {
+    token: hashToken(VALID_SESSION_TOKEN),
+    userId: TEST_USER_ID,
+    expiresAt: new Date(Date.now() + 60_000),
+  },
+];
 
 // Spy on `parseExpense` while keeping its real implementation -- Block 10's Required tests demand
 // proof that invalid-body (400) and unauthorized (covered by Block 6 already) requests never reach
@@ -65,12 +87,9 @@ function fakePrismaClient(seedCategories: FakeCategory[]) {
     },
     $connect: vi.fn().mockResolvedValue(undefined),
     $disconnect: vi.fn().mockResolvedValue(undefined),
-    user: {
-      findUnique: vi.fn(async ({ where: { id } }: { where: { id: string } }) => {
-        if (id === TEST_USER_ID) {
-          return { id: TEST_USER_ID, email: TEST_USER_EMAIL };
-        }
-        return null;
+    session: {
+      findUnique: vi.fn(async ({ where: { token } }: { where: { token: string } }) => {
+        return FAKE_SESSIONS.find((session) => session.token === token) ?? null;
       }),
     },
     category: {
@@ -151,7 +170,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
       payload: { input: "café 1500" },
     });
 
@@ -176,7 +195,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     await app.close();
   }, TEST_TIMEOUT_MS);
 
-  it("returns 401 when x-user-id is missing", async () => {
+  it("returns 401 when there is no session cookie", async () => {
     const { buildApp } = await import("../../src/app.ts");
     const prisma = fakePrismaClient(seedFor());
     // biome-ignore-next: fake client only exposes the methods the route/service exercise.
@@ -194,7 +213,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     await app.close();
   }, TEST_TIMEOUT_MS);
 
-  it("returns 401 when x-user-id belongs to no user, and never invokes parseExpense", async () => {
+  it("returns 401 when the session cookie is invalid/unknown, and never invokes parseExpense", async () => {
     const { parseExpense } = await import("@ggasia/domain");
     const { buildApp } = await import("../../src/app.ts");
     const prisma = fakePrismaClient(seedFor());
@@ -204,7 +223,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/expenses",
-      headers: { "x-user-id": UNKNOWN_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: UNKNOWN_SESSION_TOKEN },
       payload: { input: "café 1500" },
     });
 
@@ -224,7 +243,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
       payload: {},
     });
 
@@ -245,7 +264,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
       payload: { input: "sin monto" },
     });
 
@@ -266,7 +285,8 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID, "content-type": "application/json" },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers: { "content-type": "application/json" },
       payload: JSON.stringify({ input: oversizedInput }),
     });
 
@@ -287,7 +307,7 @@ describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
     const response = await app.inject({
       method: "POST",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
       payload: { input: "café 1500" },
     });
 
@@ -334,7 +354,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     const response = await app.inject({
       method: "GET",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
     });
 
     expect(response.statusCode).toBe(200);
@@ -367,7 +387,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     const response = await app.inject({
       method: "GET",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
     });
 
     expect(response.statusCode).toBe(200);
@@ -387,7 +407,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     const responseUpper = await app.inject({
       method: "GET",
       url: "/expenses?limit=200",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
     });
     expect(responseUpper.statusCode).toBe(200);
     expect(listExpenses).toHaveBeenLastCalledWith(expect.any(Object), TEST_USER_ID, 200);
@@ -395,7 +415,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     const responseLower = await app.inject({
       method: "GET",
       url: "/expenses?limit=1",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
     });
     expect(responseLower.statusCode).toBe(200);
     expect(listExpenses).toHaveBeenLastCalledWith(expect.any(Object), TEST_USER_ID, 1);
@@ -414,7 +434,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
       const response = await app.inject({
         method: "GET",
         url: `/expenses?limit=${invalidLimit}`,
-        headers: { "x-user-id": TEST_USER_ID },
+        cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
       });
       expect(response.statusCode).toBe(400);
     }
@@ -423,7 +443,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     await app.close();
   }, TEST_TIMEOUT_MS);
 
-  it("returns 401 without invoking the service when x-user-id is missing (AC-03)", async () => {
+  it("returns 401 without invoking the service when there is no session cookie (AC-03)", async () => {
     const { listExpenses } = await import("../../src/services/expense-service.ts");
     const { buildApp } = await import("../../src/app.ts");
     const prisma = fakePrismaClient(seedFor());
@@ -439,7 +459,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     await app.close();
   }, TEST_TIMEOUT_MS);
 
-  it("returns 401 with the same generic body when x-user-id belongs to no user (AC-03)", async () => {
+  it("returns 401 with the same generic body when the session cookie is invalid/unknown (AC-03)", async () => {
     const { listExpenses } = await import("../../src/services/expense-service.ts");
     const { buildApp } = await import("../../src/app.ts");
     const prisma = fakePrismaClient(seedFor());
@@ -449,7 +469,7 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     const response = await app.inject({
       method: "GET",
       url: "/expenses",
-      headers: { "x-user-id": UNKNOWN_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: UNKNOWN_SESSION_TOKEN },
     });
 
     expect(response.statusCode).toBe(401);
@@ -470,11 +490,83 @@ describe("GET /expenses (Block 4, spec-FEAT-003a)", () => {
     const response = await app.inject({
       method: "GET",
       url: "/expenses",
-      headers: { "x-user-id": TEST_USER_ID },
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
     });
 
     expect(response.statusCode).toBe(500);
     expect(response.json()).toEqual({ error: "internal_error" });
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+});
+
+/**
+ * Block 11 (spec-FEAT-004a) -- Required tests proving the `x-user-id` header is completely dead
+ * (AC-09/threat-FEAT-004a.md R5): it no longer authenticates anything, even when it names a real
+ * user, and only a valid session cookie does.
+ */
+describe("auth boundary regression -- x-user-id is fully dead (Block 11, spec-FEAT-004a)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("GET /expenses with only x-user-id (valid user, no cookie) -> 401", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      headers: { "x-user-id": TEST_USER_ID },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(listExpenses).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("POST /expenses with only x-user-id (valid user, no cookie) -> 401", async () => {
+    const { parseExpense } = await import("@ggasia/domain");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses",
+      headers: { "x-user-id": TEST_USER_ID },
+      payload: { input: "café 1500" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(parseExpense).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("GET /expenses with a valid session cookie (no x-user-id) -> 200, works the same as before", async () => {
+    const { listExpenses } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(listExpenses).mockResolvedValue({ outcome: "listed", expenses: [] });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/expenses",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(listExpenses).toHaveBeenCalledWith(expect.any(Object), TEST_USER_ID, 50);
 
     await app.close();
   }, TEST_TIMEOUT_MS);
