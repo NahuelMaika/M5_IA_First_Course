@@ -74,3 +74,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   marker could tokenize into loose digit fragments and pass a spurious amount, turning the
   expected 422 into a false 201 (~2/3 of runs) and leaving orphan rows in the shared test
   database. Same fix already applied to AC-04/AC-05: strip the hyphens.
+- [FIX-001] `apps/web`'s HTTP client (`lib/api/client.ts`) never actually sent a request from the
+  browser: `NEXT_PUBLIC_API_URL` was read via `process.env[name]` (a dynamic/bracket lookup), which
+  Next.js's build-time env inlining never picks up — only a literal `process.env.NEXT_PUBLIC_*`
+  access gets inlined into the client bundle. Every `apiRequest()` call threw before `fetch` ran,
+  silently swallowed as the same generic error path used for network failures, so the 401 → /login
+  redirect (FEAT-004b) never triggered either. Fixed by reading the var with a literal access.
+  Regression-tested against a real `next build` (not just Node/Vitest, which can't tell the two
+  notations apart) pointed at an isolated `distDir` so it never touches a live `next dev`'s output.
