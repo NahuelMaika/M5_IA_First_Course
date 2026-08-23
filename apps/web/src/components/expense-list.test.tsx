@@ -69,6 +69,7 @@ const EXPENSES_BODY = {
 afterEach(() => {
   cleanup();
   mockedApiRequest.mockReset();
+  mockedPush.mockClear();
 });
 
 describe("ExpenseList — initial load (Block 8)", () => {
@@ -101,9 +102,8 @@ describe("ExpenseList — initial load (Block 8)", () => {
     expect(onEmptyStateAction).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the error in the list's place, with a retry control, when the initial load fails (401/500/network)", async () => {
+  it("shows the error in the list's place, with a retry control, when the initial load fails (500/network)", async () => {
     for (const failure of [
-      { label: "401", setup: () => mockedApiRequest.mockResolvedValueOnce(jsonResponse(401, {})) },
       { label: "500", setup: () => mockedApiRequest.mockResolvedValueOnce(jsonResponse(500, {})) },
       {
         label: "network",
@@ -117,9 +117,23 @@ describe("ExpenseList — initial load (Block 8)", () => {
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent(/ocurrió un error/i);
       expect(screen.getByRole("button", { name: /reintentar/i })).toBeInTheDocument();
+      // Block 7 regression guard: only 401 redirects -- 500/network keep showing the generic
+      // error state and never navigate.
+      expect(mockedPush).not.toHaveBeenCalled();
 
       cleanup();
     }
+  });
+
+  // Block 7: AC-06 -- a 401 means an expired/absent session, so it redirects to /login instead of
+  // showing the generic error state (unlike 500/network, covered above).
+  it("redirects to /login without showing the generic error state when the initial load returns 401 (AC-06)", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(401, {}));
+    render(<ExpenseList />);
+
+    await waitFor(() => expect(mockedPush).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-state="error"]')).not.toBeInTheDocument();
   });
 
   it("activating retry requests `GET /expenses` again without reloading the page", async () => {
