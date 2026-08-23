@@ -1,17 +1,19 @@
 /**
- * API client with stub `x-user-id` auth (Block 5 — spec-FEAT-003b).
+ * API client that relies on the browser's session cookie (Block 2 — spec-FEAT-004b).
  *
  * This is the ONLY module in `apps/web` allowed to build a request towards `apps/api` -- no
- * component from later blocks constructs its own URL or attaches `x-user-id` by hand
- * (Block 5's completion criterion). It is a generic transport wrapper around `fetch`, not a place
- * for expense-specific business logic (create/list live in Block 7/Block 8, on top of this).
+ * component from later blocks constructs its own URL by hand (Block 5's completion criterion,
+ * spec-FEAT-003b). It is a generic transport wrapper around `fetch`, not a place for
+ * expense-specific business logic (create/list live in Block 7/Block 8, on top of this).
  *
- * Both `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_STUB_USER_ID` are read from `process.env` on every
- * call (never cached at module load) so a missing/empty value fails fast, at first use, instead of
- * silently building a request against `undefined` -- see `.env.example` for what each documents.
+ * `NEXT_PUBLIC_API_URL` is read from `process.env` on every call (never cached at module load) so
+ * a missing/empty value fails fast, at first use, instead of silently building a request against
+ * `undefined` -- see `.env.example` for what it documents. Authentication no longer travels as a
+ * stub header: `credentials: "include"` makes the browser attach and honor the session cookie set
+ * by `apps/api` on login (requires `apps/api`'s CORS config to allow credentials, see Block 1).
  */
 
-function readRequiredEnvVar(name: "NEXT_PUBLIC_API_URL" | "NEXT_PUBLIC_STUB_USER_ID"): string {
+function readRequiredEnvVar(name: "NEXT_PUBLIC_API_URL"): string {
   const value = process.env[name];
 
   if (!value) {
@@ -24,19 +26,18 @@ function readRequiredEnvVar(name: "NEXT_PUBLIC_API_URL" | "NEXT_PUBLIC_STUB_USER
 }
 
 /**
- * Sends a request to `apps/api`, attaching the stub `x-user-id` header. `path` is joined directly
- * to `NEXT_PUBLIC_API_URL` (e.g. `apiRequest("/expenses", { method: "POST", body: ... })`).
+ * Sends a request to `apps/api`, including the session cookie via `credentials: "include"`.
+ * `path` is joined directly to `NEXT_PUBLIC_API_URL` (e.g.
+ * `apiRequest("/expenses", { method: "POST", body: ... })`).
  *
- * Validation of both required env vars happens here, before `fetch` is ever called -- a missing
- * `NEXT_PUBLIC_API_URL` or `NEXT_PUBLIC_STUB_USER_ID` throws instead of sending a request with an
- * empty or `"undefined"` value.
+ * Validation of the required env var happens here, before `fetch` is ever called -- a missing
+ * `NEXT_PUBLIC_API_URL` throws instead of sending a request against an empty or `"undefined"`
+ * value.
  */
 export async function apiRequest(path: string, init: RequestInit = {}): Promise<Response> {
   const baseUrl = readRequiredEnvVar("NEXT_PUBLIC_API_URL");
-  const stubUserId = readRequiredEnvVar("NEXT_PUBLIC_STUB_USER_ID");
 
   const headers = new Headers(init.headers);
-  headers.set("x-user-id", stubUserId);
 
-  return fetch(`${baseUrl}${path}`, { ...init, headers });
+  return fetch(`${baseUrl}${path}`, { ...init, headers, credentials: "include" });
 }

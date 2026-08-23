@@ -17,6 +17,13 @@ vi.mock("@/lib/api/client", () => ({
 vi.mock("@/lib/notifications/notifications", () => ({
   notify: vi.fn(),
 }));
+// Block 8 (spec-FEAT-004b): `submitExpense` now reuses `useRedirectOnUnauthorized`, which calls
+// `useRouter()` from `next/navigation` -- without this mock, every render below fails with
+// "invariant expected app router to be mounted".
+const mockedPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockedPush }),
+}));
 
 const mockedApiRequest = vi.mocked(apiRequest);
 const mockedNotify = vi.mocked(notify);
@@ -48,6 +55,7 @@ afterEach(() => {
   cleanup();
   mockedApiRequest.mockReset();
   mockedNotify.mockReset();
+  mockedPush.mockClear();
 });
 
 describe("ExpenseForm — client-side validation (Block 6, still exercised through Block 7's wiring)", () => {
@@ -204,8 +212,8 @@ describe("ExpenseForm — submit (Block 7)", () => {
     expect(screen.queryByText("Comida")).not.toBeInTheDocument();
   });
 
-  it("400/401/500 show a generic error notification without attempting to read `reason` from the response", async () => {
-    for (const status of [400, 401, 500]) {
+  it("400/500 show a generic error notification without attempting to read `reason` from the response, and do not redirect (regression, Block 8)", async () => {
+    for (const status of [400, 500]) {
       mockedApiRequest.mockReset();
       mockedNotify.mockReset();
       // Deliberately includes a valid `reason` in the body: if the component read it, the
@@ -225,12 +233,33 @@ describe("ExpenseForm — submit (Block 7)", () => {
       expect(message).toMatch(/ocurrió un error/i);
       expect(message).not.toMatch(/\$0/);
       expect(textarea).toHaveValue(VALID_INPUT);
+      // Block 8 regression guard: only 401 redirects -- 400/500 keep showing the generic
+      // notification and never navigate.
+      expect(mockedPush).not.toHaveBeenCalled();
 
       cleanup();
     }
   });
 
-  it("a network failure (fetch rejects) is treated the same as a 500", async () => {
+  // Block 8 (spec-FEAT-004b): a 401 means the session expired or is absent while submitting a
+  // gasto -- redirect to /login instead of the generic notification, same policy Block 7 already
+  // applies to `expense-list.tsx`'s initial load.
+  it("401 redirects to /login without calling notify", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(401, { reason: "amount_zero" }));
+    const user = userEvent.setup();
+    render(<ExpenseForm />);
+    const textarea = screen.getByRole("textbox", { name: /gasto/i });
+    const button = screen.getByRole("button", { name: /guardar/i });
+
+    await user.click(textarea);
+    await user.type(textarea, VALID_INPUT);
+    await user.click(button);
+
+    await waitFor(() => expect(mockedPush).toHaveBeenCalledWith("/login"));
+    expect(mockedNotify).not.toHaveBeenCalled();
+  });
+
+  it("a network failure (fetch rejects) is treated the same as a 500, without redirecting", async () => {
     mockedApiRequest.mockRejectedValueOnce(new TypeError("Failed to fetch"));
     const user = userEvent.setup();
     render(<ExpenseForm />);
@@ -244,5 +273,6 @@ describe("ExpenseForm — submit (Block 7)", () => {
     await waitFor(() => expect(mockedNotify).toHaveBeenCalledTimes(1));
     expect(mockedNotify).toHaveBeenCalledWith("error", expect.stringMatching(/ocurrió un error/i));
     expect(textarea).toHaveValue(VALID_INPUT);
+    expect(mockedPush).not.toHaveBeenCalled();
   });
 });

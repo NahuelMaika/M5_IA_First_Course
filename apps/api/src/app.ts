@@ -97,6 +97,14 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   app.register(cors, {
     origin: webOrigin,
     methods: CORS_METHODS,
+    // `@fastify/cors` defaults `credentials` to `false` (see
+    // `apps/api/node_modules/@fastify/cors/index.js:15`), so `Access-Control-Allow-Credentials`
+    // was never sent. Without it, browsers discard cookies received/sent with
+    // `credentials: "include"` on cross-origin requests (spec-FEAT-004b Block 1) -- required for
+    // `apps/web`'s upcoming switch away from `x-user-id` to the httpOnly session cookie. Safe to
+    // combine with `credentials: true` because `webOrigin` is always an explicit string, never
+    // `"*"` (enforced by `env.ts`'s WEB_ORIGIN validation).
+    credentials: true,
   });
   // No `secret` option -- the session token itself is an opaque 256-bit random value,
   // validated against a SHA-256 hash stored in the DB (threat-FEAT-004a.md's explicit decision

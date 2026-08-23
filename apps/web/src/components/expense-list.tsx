@@ -5,12 +5,14 @@ import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiRequest } from "@/lib/api/client";
+import { useRedirectOnUnauthorized } from "@/lib/auth/use-redirect-on-unauthorized";
 
 import { ExpenseRow, type CreatedExpense, type Expense } from "./expense-row";
 
 // Block 8 (spec-FEAT-003b): shared with the load-error inline state -- kept as a plain string,
-// not read from the response body (401/500/network all collapse into the same generic message,
-// same policy Block 7 applies to the form's own submit failures).
+// not read from the response body. 500/network still collapse into this generic message; 401 no
+// longer does -- Block 7 (spec-FEAT-004b) routes it to `useRedirectOnUnauthorized` instead, since
+// it means the session expired or is absent, not a generic failure.
 const GENERIC_ERROR_MESSAGE = "Ocurrió un error, intentá de nuevo.";
 const EMPTY_STATE_MESSAGE = "Todavía no cargaste ningún gasto. Empezá agregando el primero.";
 
@@ -64,6 +66,7 @@ export interface ExpenseListProps {
 export function ExpenseList({ onEmptyStateAction, newExpense }: ExpenseListProps) {
   const [state, setState] = React.useState<ListState>({ status: "loading" });
   const lastInsertedExpenseRef = React.useRef<CreatedExpense | null>(null);
+  const handleUnauthorized = useRedirectOnUnauthorized();
 
   React.useEffect(() => {
     if (!newExpense || newExpense === lastInsertedExpenseRef.current) return;
@@ -83,6 +86,9 @@ export function ExpenseList({ onEmptyStateAction, newExpense }: ExpenseListProps
     setState({ status: "loading" });
     try {
       const response = await apiRequest("/expenses");
+      // Block 7 (spec-FEAT-004b), AC-06: a 401 means the session expired or is absent -- redirect
+      // to /login instead of the generic error state; the redirect replaces it, not coexists.
+      if (handleUnauthorized(response)) return;
       if (!response.ok) {
         setState({ status: "error" });
         return;
@@ -93,7 +99,7 @@ export function ExpenseList({ onEmptyStateAction, newExpense }: ExpenseListProps
       // Network failure (fetch itself rejects, no response at all): same treatment as a 500.
       setState({ status: "error" });
     }
-  }, []);
+  }, [handleUnauthorized]);
 
   React.useEffect(() => {
     void loadExpenses();

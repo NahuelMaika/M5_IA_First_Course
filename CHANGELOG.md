@@ -49,6 +49,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `secure`/`sameSite` attributes are NODE_ENV-aware. Login is throttled 5 failed attempts per
   email per 15-minute window (case-insensitive) and timing-safe against email enumeration. See
   `docs/daw/security/threat-FEAT-004a.md` for the full threat model.
+- [FEAT-004b] `apps/web` registration, login and logout screens (`/register`, `/login`, plus a
+  logout control on the expense-entry screen), backed by `apps/api`'s auth endpoints from
+  FEAT-004a. The HTTP client now sends the session cookie (`credentials: "include"`) instead of
+  the retired `x-user-id` header, with CORS `credentials` enabled on `apps/api` to allow it. A
+  shared `useRedirectOnUnauthorized` hook centralizes the "401 from apps/api means the session
+  expired or is absent" policy, applied to both the expense list's initial load and the expense
+  form's submit — either now redirects to `/login` instead of showing the generic error state.
+  See `docs/daw/security/threat-FEAT-004b.md` for the two accepted CSRF risks (login and
+  logout/expenses), mitigated the same way as FEAT-004a: required `Content-Type: application/json`
+  plus single-origin CORS blocks a simple cross-origin form submission.
 
 ### Changed
 

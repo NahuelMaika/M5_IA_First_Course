@@ -19,6 +19,12 @@ vi.mock("@/lib/api/client", () => ({
 vi.mock("@/lib/notifications/notifications", () => ({
   notify: vi.fn(),
 }));
+// `page.tsx` also mounts Block 6's `LogoutButton`, which calls `useRouter()` -- without this mock,
+// every full-page render below fails with "invariant expected app router to be mounted".
+const mockedPush = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: mockedPush }),
+}));
 
 const mockedApiRequest = vi.mocked(apiRequest);
 
@@ -63,6 +69,7 @@ const EXPENSES_BODY = {
 afterEach(() => {
   cleanup();
   mockedApiRequest.mockReset();
+  mockedPush.mockClear();
 });
 
 describe("ExpenseList — initial load (Block 8)", () => {
@@ -95,9 +102,8 @@ describe("ExpenseList — initial load (Block 8)", () => {
     expect(onEmptyStateAction).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the error in the list's place, with a retry control, when the initial load fails (401/500/network)", async () => {
+  it("shows the error in the list's place, with a retry control, when the initial load fails (500/network)", async () => {
     for (const failure of [
-      { label: "401", setup: () => mockedApiRequest.mockResolvedValueOnce(jsonResponse(401, {})) },
       { label: "500", setup: () => mockedApiRequest.mockResolvedValueOnce(jsonResponse(500, {})) },
       {
         label: "network",
@@ -111,9 +117,23 @@ describe("ExpenseList — initial load (Block 8)", () => {
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent(/ocurrió un error/i);
       expect(screen.getByRole("button", { name: /reintentar/i })).toBeInTheDocument();
+      // Block 7 regression guard: only 401 redirects -- 500/network keep showing the generic
+      // error state and never navigate.
+      expect(mockedPush).not.toHaveBeenCalled();
 
       cleanup();
     }
+  });
+
+  // Block 7: AC-06 -- a 401 means an expired/absent session, so it redirects to /login instead of
+  // showing the generic error state (unlike 500/network, covered above).
+  it("redirects to /login without showing the generic error state when the initial load returns 401 (AC-06)", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(401, {}));
+    render(<ExpenseList />);
+
+    await waitFor(() => expect(mockedPush).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(document.querySelector('[data-state="error"]')).not.toBeInTheDocument();
   });
 
   it("activating retry requests `GET /expenses` again without reloading the page", async () => {
@@ -208,14 +228,23 @@ describe("Page — full screen (Block 9)", () => {
     await screen.findByRole("list", { name: /gastos/i });
 
     // The list already has data (no empty-state button) and loaded successfully (no retry
-    // button), so the screen's only interactive controls are the form's textarea and its submit
-    // button -- confirmed by counting every native focusable element on the page.
+    // button), so the screen's interactive controls are Block 6's `LogoutButton` plus the form's
+    // textarea and its submit button -- confirmed by counting every native focusable element on
+    // the page.
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(2);
+    expect(focusableElements).toHaveLength(3);
+
+    // Neither `LogoutButton` nor the form's controls set an explicit `tabIndex`, so tab order
+    // follows DOM order. In `page.tsx`, `<LogoutButton/>` sits in the header row above
+    // `<ExpenseForm/>`, so it is reached first, followed by the textarea and then the submit
+    // button.
+    expect(focusableElements[0]).toHaveAccessibleName(/cerrar sesión/i);
+    expect(focusableElements[1].tagName).toBe("TEXTAREA");
+    expect(focusableElements[2]).toHaveAttribute("type", "submit");
 
     for (const element of focusableElements) {
       await user.tab();
@@ -262,14 +291,14 @@ describe("Page — full screen (Block 9)", () => {
     render(<Page />);
     await screen.findByRole("list", { name: /gastos/i });
 
-    // Same universe as AC-14: the list already has data, so the screen's only interactive
-    // controls are the form's textarea and its submit button.
+    // Same universe as AC-14: the list already has data, so the screen's interactive controls
+    // are `LogoutButton` plus the form's textarea and its submit button.
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(2);
+    expect(focusableElements).toHaveLength(3);
 
     // jsdom does not run a real layout engine, so pixel geometry (getBoundingClientRect) is
     // never real here -- verify the 24px CSS floor via the Tailwind spacing-scale classes that

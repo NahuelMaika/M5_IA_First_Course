@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/api/client";
+import { useRedirectOnUnauthorized } from "@/lib/auth/use-redirect-on-unauthorized";
 import { notify } from "@/lib/notifications/notifications";
 import { getRejectionMessage, type RejectionReason } from "@/lib/rejection-messages";
 
@@ -16,8 +17,10 @@ const MAX_INPUT_LENGTH = 500;
 
 const EMPTY_ERROR_MESSAGE = "Escribí un gasto antes de guardar.";
 const LENGTH_ERROR_MESSAGE = "Máximo 500 caracteres.";
-// Block 7: shared by every non-422 failure path (400/401/500 and a rejected fetch itself) -- none
-// of them attempts to read `reason` off the response.
+// Block 7: shared by every non-422/non-401 failure path (400/500 and a rejected fetch itself) --
+// none of them attempts to read `reason` off the response. 401 no longer falls here -- Block 8
+// (spec-FEAT-004b) routes it to `useRedirectOnUnauthorized` instead, since it means the session
+// expired or is absent, not a generic failure.
 const GENERIC_ERROR_MESSAGE = "Ocurrió un error, intentá de nuevo.";
 
 const EXPENSE_INPUT_ID = "expense-input";
@@ -91,6 +94,7 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
   const [error, setError] = React.useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [result, setResult] = React.useState<InterpretedExpense | null>(null);
+  const handleUnauthorized = useRedirectOnUnauthorized();
 
   React.useImperativeHandle(ref, () => ({
     focus: () => {
@@ -132,6 +136,11 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
         return;
       }
 
+      // Block 8 (spec-FEAT-004b): a 401 means the session expired or is absent while submitting a
+      // gasto -- redirect to /login instead of falling into the generic message below, same
+      // policy `expense-list.tsx` (Block 7) already applies to its initial load.
+      if (handleUnauthorized(response)) return;
+
       if (response.status === 422) {
         // Only status where the body is parsed: every other failure status below is handled
         // WITHOUT reading the response body at all.
@@ -140,7 +149,8 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
         return;
       }
 
-      // 400/401/500 (and any other non-201/422 status): generic message, body never parsed.
+      // 400/500 (and any other non-201/422/401 status): generic message, body never parsed. 401
+      // is handled separately above, see Block 8.
       notify("error", GENERIC_ERROR_MESSAGE);
     } catch {
       // Network failure (fetch itself rejects, no response at all): same treatment as a 500.
