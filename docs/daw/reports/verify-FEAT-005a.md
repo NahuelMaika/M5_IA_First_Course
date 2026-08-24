@@ -65,10 +65,55 @@ inspección directa de los 24 puntos de trazabilidad de arriba. Queda como pendi
 no bloqueante: generar el número exacto la próxima vez que haya acceso a la DB de test,
 antes del release si se quiere el dato duro.
 
-## Resultado
+## Resultado (Loop 1)
 
 ```
 Total: 24 passed, 0 failed, 2 warnings (cobertura numérica pendiente, TDD-evidence no confirmable por inspección de código final)
+Result: PASSED
+```
+
+**PASSED** — 0 FAILs de F-VER-01 a F-VER-06.
+
+## Verificación — Loop 2 (select z-index + Descripción en edición)
+
+Verificado por `daw-module-verifier` contra `prd-FEAT-005a.md` v1.1 (FR-09/AC-11/AC-12),
+`spec-FEAT-005a.md` (Spec loops: 2) y el código final del loop correctivo.
+
+| AC | Código | Test |
+|----|--------|------|
+| AC-11 | `schemas/expense.ts:106`, `expense-repository.ts:update`, `routes/expenses.ts:158-159`, `expense-edit-dialog.tsx:339-354` | `expense.test.ts:118-128`, `expense-repository.test.ts:389-397`, `expenses.integration.test.ts:764-802`, `expense-edit-dialog.test.tsx:150-204` — verifican el valor persistido en Prisma, no solo el status code, incluyendo el caso "vaciar a \"\"" |
+| AC-12 | `schemas/expense.ts:106` (`z.string().max(300)`) | `expense.test.ts:130-134`, `expenses.integration.test.ts:805-831` (400 + registro persistido intacto), `expense-edit-dialog.test.tsx:206-214` (error inline + submit deshabilitado) |
+| Regresión z-index | `select.tsx:59` (`z-[60]`, vs. `z-50` de `dialog.tsx:24,31`) | `select.test.tsx:99-119` — Select montado dentro de un Dialog abierto, click real, compara numéricamente el z-index del popup contra el del diálogo (no un check superficial de presencia de clase) |
+
+AC-01 a AC-10: sin regresión — siguen citadas por ID en `expense-edit-dialog.test.tsx`,
+`expense-list.test.tsx`, `expense-row.test.tsx` y `expenses.integration.test.ts`; ningún test
+eliminado o vaciado respecto al veredicto del loop 1.
+
+Spec (5 bloques tocados por el loop 2): Block 1, 2, 6, 9, 11 — todos ✅ PASS.
+
+Calidad: ✅ F-VER-05 (`pnpm -r typecheck`, 4/4 workspaces limpio), ✅ W-VER-01 (sin código
+muerto en los diffs), ✅ W-VER-03 (sin tests frágiles — `select.test.tsx` usa comparación
+numérica robusta del z-index, no un string literal).
+
+### Ejecución real y nota sobre DB
+
+El verificador corrió con la conexión a Supabase caída en el momento (`P1001: Can't reach
+database server`) — reporta esto explícitamente como WARN y no lo asume como PASS, correcto.
+`apps/web` sí corrió completo: 130/130 (1 timeout de worker por contención de recursos en
+`client.test.ts`, aislado 4/4 verde). `pnpm -r typecheck` limpio.
+
+Para `apps/api`, se toma como evidencia la corrida real de esta misma sesión, hecha DESPUÉS
+del commit del loop 2 (`21092a6`) y CON la red de DB disponible: `pnpm --filter @ggasia/api
+test` → **22 archivos, 207/207 tests passed**, incluyendo `expense-repository.test.ts`,
+`services/expense-service.test.ts` y `expenses.integration.test.ts` con los casos nuevos de
+AC-11/AC-12 ya en verde (tras corregir en el camino una aserción propia incorrecta sobre el
+valor por defecto de `description` en un gasto recién creado por texto libre). Ningún FAIL
+real originado en código de este loop, en ninguna corrida.
+
+## Resultado (Loop 2)
+
+```
+Total: 14 passed, 0 failed, 1 warning (apps/api DB-connected run taken from earlier in this session, not from this verify pass — documented above)
 Result: PASSED
 ```
 
