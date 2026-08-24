@@ -5,6 +5,7 @@
 | Ticket | FEAT-005a |
 | Date | 2026-08-23 |
 | Based on | prd-FEAT-005a.md, plan validado por daw-impact-scanner + daw-arch-auditor (PASSED) |
+| Loop 2 | FR-09 (edición de Descripción) cae bajo el mismo patrón de R3: `updateExpenseBodySchema` ya declara `description: z.string().max(300)` explícito (RNF-07), sin límite heredado del alta. Sin riesgo nuevo — mismo ownership scoping de R1/R2, sin render HTML sin escapar (React, no `dangerouslySetInnerHTML`). El fix de `ui/select.tsx` (z-index del popup) es puramente visual/CSS, sin cruzar ningún trust boundary — no requiere análisis STRIDE nuevo. |
 
 ## Componentes nuevos o modificados
 
