@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ExpenseRow, type Expense } from "./expense-row";
 
@@ -26,7 +27,7 @@ const BASE_EXPENSE: Expense = {
 
 describe("ExpenseRow — layout (Block 9)", () => {
   it("shows date, concept, amount and category visually separated, with the amount as the most visually prominent datum (verified by a distinctive class)", () => {
-    render(<ExpenseRow expense={BASE_EXPENSE} />);
+    render(<ExpenseRow expense={BASE_EXPENSE} onEdit={() => {}} onDelete={() => {}} />);
 
     const name = screen.getByText("Almuerzo");
     const category = screen.getByText("Comida");
@@ -54,7 +55,13 @@ describe("ExpenseRow — layout (Block 9)", () => {
 
   it("wraps a 200+ character concept across multiple lines inside a 360px-wide container, without truncating and without horizontal scroll", () => {
     const longName = "Compra de supermercado con muchos artículos variados ".repeat(5).trim(); // > 200 chars
-    render(<ExpenseRow expense={{ ...BASE_EXPENSE, name: longName }} />);
+    render(
+      <ExpenseRow
+        expense={{ ...BASE_EXPENSE, name: longName }}
+        onEdit={() => {}}
+        onDelete={() => {}}
+      />
+    );
 
     const name = screen.getByText(longName);
     expect(longName.length).toBeGreaterThan(200);
@@ -73,8 +80,37 @@ describe("ExpenseRow — layout (Block 9)", () => {
   });
 
   it("does not clip or scroll horizontally regardless of the amount's own class list", () => {
-    render(<ExpenseRow expense={BASE_EXPENSE} />);
+    render(<ExpenseRow expense={BASE_EXPENSE} onEdit={() => {}} onDelete={() => {}} />);
     const row = screen.getByText("Almuerzo").closest("li");
     expect(row?.className).not.toMatch(/overflow-x-(auto|scroll)/);
+  });
+});
+
+// Block 12 (spec-FEAT-005a.md): edit/delete triggers. `expense-row.tsx` stays presentational --
+// these tests only verify the buttons render and report the click back through `onEdit`/
+// `onDelete`, with the row's own `expense`; the actual dialogs/DELETE call live at
+// `expense-list.tsx`, exercised in expense-list.test.tsx.
+describe("ExpenseRow — edit/delete triggers (Block 12)", () => {
+  it("renders an edit button and a delete button", () => {
+    render(<ExpenseRow expense={BASE_EXPENSE} onEdit={() => {}} onDelete={() => {}} />);
+
+    expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /eliminar/i })).toBeInTheDocument();
+  });
+
+  it("invokes onEdit with this row's expense when the edit button is clicked, and onDelete with it when the delete button is clicked", async () => {
+    const user = userEvent.setup();
+    const onEdit = vi.fn();
+    const onDelete = vi.fn();
+    render(<ExpenseRow expense={BASE_EXPENSE} onEdit={onEdit} onDelete={onDelete} />);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    expect(onEdit).toHaveBeenCalledTimes(1);
+    expect(onEdit).toHaveBeenCalledWith(BASE_EXPENSE);
+    expect(onDelete).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /eliminar/i }));
+    expect(onDelete).toHaveBeenCalledTimes(1);
+    expect(onDelete).toHaveBeenCalledWith(BASE_EXPENSE);
   });
 });
