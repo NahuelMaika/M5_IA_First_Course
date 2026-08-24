@@ -97,3 +97,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   redirect (FEAT-004b) never triggered either. Fixed by reading the var with a literal access.
   Regression-tested against a real `next build` (not just Node/Vitest, which can't tell the two
   notations apart) pointed at an isolated `distDir` so it never touches a live `next dev`'s output.
+- [FIX-002] Editing a gasto's Categoría: the Select's popup opened at the correct position but
+  rendered visually behind the edit Dialog, so pointer clicks on the options "passed through" and
+  the Dialog read them as an outside-press and closed before anything could be selected. Root cause:
+  the root `<body>` never declared `isolation: isolate`, so Base UI's Dialog and Select portals
+  (both appended to `document.body`) had no guaranteed shared stacking context for their `z-index`
+  values to compare against — a scenario Base UI's own docs call out. Fixed by adding `isolate` to
+  the root `<body>` in `apps/web/src/app/layout.tsx`.
