@@ -59,6 +59,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   See `docs/daw/security/threat-FEAT-004b.md` for the two accepted CSRF risks (login and
   logout/expenses), mitigated the same way as FEAT-004a: required `Content-Type: application/json`
   plus single-origin CORS blocks a simple cross-origin form submission.
+- [FEAT-005a] Edit and delete for expenses. `apps/api`: `PATCH /expenses/:id` (partial update —
+  amount, place, date and/or category, at least one field required) and `DELETE /expenses/:id`,
+  both scoped to the authenticated user's own expenses (an expense that exists but belongs to
+  another user responds with the same ambiguous `not_found` as one that does not exist at all —
+  see `docs/daw/security/threat-FEAT-005a.md`, R1/R2). `apps/web`: an edit dialog
+  (`expense-edit-dialog.tsx`, built on new `ui/dialog.tsx` and `ui/select.tsx` wrappers around
+  Base UI, plus a shared `useFieldValidation` hook) and a delete confirmation
+  (`ui/confirm-dialog.tsx`) wired into the expense list — each row gets edit/delete buttons, both
+  dialogs mount once at list level, and a successful edit or delete updates the list in place
+  without a reload, with a brief success/error notification through the centralized `notify()`
+  module.
 
 ### Changed
 
