@@ -5,7 +5,7 @@
 | Ticket | FEAT-005a |
 | Tracker | none |
 | Date | 2026-08-23 |
-| PRD loops | 0 |
+| PRD loops | 1 |
 
 ## Context and Problem
 
@@ -21,8 +21,8 @@ este ticket.
 
 ## Goals
 
-- Permitir editar Monto, Lugar y Fecha de un gasto propio, y reasignar su categoría manualmente, sin
-  disparar categorización automática.
+- Permitir editar Monto, Lugar, Fecha y Descripción de un gasto propio, y reasignar su categoría
+  manualmente, sin disparar categorización automática.
 - Permitir eliminar un gasto propio de forma permanente, con confirmación previa.
 - Dejar construidos el diálogo modal de edición y el diálogo de confirmación destructiva como
   componentes reutilizables por el resto del split.
@@ -50,6 +50,11 @@ este ticket.
   RF-56, RF-57, RF-77 de `PRD.md`).
 - FR-08: El sistema debe denegar el acceso, la modificación o la eliminación de un gasto que no
   pertenece al usuario autenticado (FR-24 de `prd-FEAT-005.md`; RF-02, RF-03 de `PRD.md`).
+- FR-09: El sistema debe permitir a un usuario autenticado modificar la Descripción de un gasto
+  propio como parte de su edición, incluyendo dejarla vacía (campo "Descripción" — comentario
+  opcional sobre el gasto — del Modelo de Datos: Gasto de `kb.md`; gap detectado en pruebas
+  manuales tras el cierre de CODE: el campo existe en el modelo de datos y está persistido, pero no
+  había sido trazado a ningún FR/AC de este ticket).
 
 ## Non-Functional Requirements
 
@@ -86,6 +91,10 @@ este ticket.
 - AC-10 (FR-07): WHEN un usuario autenticado abre la confirmación de eliminar un gasto, THE system
   SHALL identificar el gasto afectado por su nombre y SHALL ubicar el foco inicial en la acción
   destructiva.
+- AC-11 (FR-09): WHEN un usuario autenticado edita la Descripción de un gasto propio (incluyendo
+  dejarla vacía) y confirma, THE system SHALL actualizarla en menos de 3 segundos.
+- AC-12 (FR-09): IF un usuario autenticado ingresa una Descripción de más de 300 caracteres, THEN
+  THE system SHALL rechazar la edición sin modificar el gasto (RNF-07 de `PRD.md`).
 
 ## Out of Scope
 
@@ -113,7 +122,14 @@ este ticket.
 - `prd-FEAT-004a.md` / `prd-FEAT-004b.md` — autenticación y sesión real, base del control de acceso
   de FR-08.
 - `AGENTS.md` — convención `routes → service → repository`.
+- `kb.md` — Modelo de Datos: Gasto, origen del campo Descripción que trae FR-09.
 
 ## Historial de Cambios
 
 - **v1.0** — versión inicial, sub-ticket a del split de FEAT-005.
+- **v1.1** — PRD loops 1. Se agrega FR-09/AC-11/AC-12: edición del campo Descripción, ausente en la
+  versión original pese a existir en el Modelo de Datos: Gasto de `kb.md` y estar persistido en el
+  esquema (`Expense.description`). Gap detectado en pruebas manuales tras el cierre de CODE. Se
+  aprovecha el mismo loop correctivo para arreglar un bug de implementación no relacionado con el
+  PRD: el popup de `ui/select.tsx` (Block 9) queda detrás del backdrop del diálogo modal (falta
+  `z-index`) — no requiere cambio de PRD, se corrige directamente en CODE.

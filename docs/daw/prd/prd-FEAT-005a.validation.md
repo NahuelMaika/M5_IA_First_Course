@@ -1,8 +1,8 @@
 ```
-/daw-validate-prd docs/daw/prd/prd-FEAT-005a.md — PASSED
+/daw-validate-prd /mnt/c/Users/fepmna/curso_ia/M5/docs/daw/prd/prd-FEAT-005a.md — PASSED
 ────────────────────────────────────────────────────────────────
   ✅ F-PRD-08: all mandatory sections present
-  ✅ F-PRD-05: 8 FR, 3 NFR, 10 AC — unique, gapless
+  ✅ F-PRD-05: 9 FR, 3 NFR, 12 AC — unique, gapless
   ✅ F-PRD-01: every FR is validated by at least one AC
   ✅ F-PRD-03: every NFR carries a quantitative value
   ✅ F-PRD-04: Out of Scope has explicit items
