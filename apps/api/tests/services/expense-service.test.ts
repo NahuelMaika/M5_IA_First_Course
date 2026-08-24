@@ -602,6 +602,27 @@ describe("expenseService.updateExpense (Block 4, spec-FEAT-005a)", () => {
     }
   });
 
+  it("updates the Descripción of the user's own expense, including clearing it to \"\" -- AC-11", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const categories = seedFor();
+    const ownCategoryId = categories[0].id;
+    const expense = fakeExpenseSeed({ categoryId: ownCategoryId });
+    const prisma = fakePrismaClient(categories, [expense]);
+
+    const result = await updateExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      expense.id,
+      { description: "Nota del gasto" },
+    );
+
+    expect(result.outcome).toBe("updated");
+    if (result.outcome === "updated") {
+      expect(result.expense.description).toBe("Nota del gasto");
+    }
+  });
+
   it("returns 'not_found' for a nonexistent expense", async () => {
     const { updateExpense } = await import("../../src/services/expense-service.ts");
     const prisma = fakePrismaClient(seedFor());

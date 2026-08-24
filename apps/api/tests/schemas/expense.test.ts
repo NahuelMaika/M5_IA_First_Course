@@ -114,4 +114,22 @@ describe("updateExpenseBodySchema (spec-FEAT-005a Block 1)", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("accepts a PATCH with description -- AC-11", () => {
+    const result = updateExpenseBodySchema.safeParse({ description: "Compra del mes" });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a PATCH that clears description to \"\" -- AC-11", () => {
+    const result = updateExpenseBodySchema.safeParse({ description: "" });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a description longer than 300 chars -- AC-12", () => {
+    const result = updateExpenseBodySchema.safeParse({ description: "a".repeat(301) });
+
+    expect(result.success).toBe(false);
+  });
 });

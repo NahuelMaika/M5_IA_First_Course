@@ -761,6 +761,77 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       });
     });
 
+    describe("AC-11 -- PATCH updates description, including clearing it to \"\"", () => {
+      it("returns 200 with the updated description", async () => {
+        const rawInput = `kiosco 1500 - block6 loop2 patch ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { description: "Nota del gasto" },
+        });
+
+        expect(patchResponse.statusCode).toBe(200);
+
+        const persisted = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(persisted?.description).toBe("Nota del gasto");
+
+        const clearResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { description: "" },
+        });
+
+        expect(clearResponse.statusCode).toBe(200);
+        const cleared = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(cleared?.description).toBe("");
+      });
+    });
+
+    describe("AC-12 -- PATCH rejects a description over 300 chars", () => {
+      it("returns 400 and does not modify the expense", async () => {
+        const rawInput = `kiosco 1500 - block6 loop2 reject ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { description: "a".repeat(301) },
+        });
+
+        expect(patchResponse.statusCode).toBe(400);
+
+        const untouched = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(untouched?.description).toBe(created.description);
+      });
+    });
+
     describe("AC-02 -- PATCH returns 404 for another user's expense", () => {
       it("404s without updating the row and reveals nothing about its existence", async () => {
         const rawInput = `kiosco 1500 - block6 foreign patch ${randomUUID()}`;

@@ -24,6 +24,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Select, type SelectOption } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/api/client";
 import { useRedirectOnUnauthorized } from "@/lib/auth/use-redirect-on-unauthorized";
 import { useFieldValidation } from "@/lib/hooks/use-field-validation";
@@ -36,6 +37,7 @@ const GENERIC_ERROR_MESSAGE = "Ocurrió un error, intentá de nuevo.";
 const AMOUNT_FIELD_ID = "expense-edit-amount";
 const PLACE_FIELD_ID = "expense-edit-place";
 const WHEN_FIELD_ID = "expense-edit-when";
+const DESCRIPTION_FIELD_ID = "expense-edit-description";
 
 // Same RNF-08 cap as `updateExpenseBodySchema` (apps/api/src/schemas/expense.ts, Block 1).
 const MAX_AMOUNT = 999999999.99;
@@ -76,6 +78,13 @@ function validateAmount(value: string): string | undefined {
 function validatePlace(value: string): string | undefined {
   if (value.length < 1) return "Ingresá un lugar.";
   if (value.length > 200) return "Máximo 200 caracteres.";
+  return undefined;
+}
+
+// Unlike `validatePlace`, empty is valid -- Descripción is an optional field (kb.md's Modelo de
+// Datos: Gasto), so the form must allow submitting it blank, including to clear an existing value.
+function validateDescription(value: string): string | undefined {
+  if (value.length > 300) return "Máximo 300 caracteres.";
   return undefined;
 }
 
@@ -128,6 +137,7 @@ export function ExpenseEditDialog({
 }: ExpenseEditDialogProps) {
   const [amount, setAmount] = React.useState(expense.amount);
   const [place, setPlace] = React.useState(expense.place);
+  const [description, setDescription] = React.useState(expense.description);
   const [whenValue, setWhenValue] = React.useState(() => toDateInputValue(expense.when));
   const [categories, setCategories] = React.useState<CategoryDto[]>([]);
   const [categoryId, setCategoryId] = React.useState<string | null>(null);
@@ -140,6 +150,7 @@ export function ExpenseEditDialog({
   const amountValidation = useFieldValidation(amount, validateAmount);
   const placeValidation = useFieldValidation(place, validatePlace);
   const whenValidation = useFieldValidation(whenValue, validateWhen);
+  const descriptionValidation = useFieldValidation(description, validateDescription);
 
   // Resets the form fields to the expense's current values every time the dialog opens. Block 12
   // mounts this dialog once at list level and reuses it across rows (per the spec's Logic
@@ -148,6 +159,7 @@ export function ExpenseEditDialog({
     if (!open) return;
     setAmount(expense.amount);
     setPlace(expense.place);
+    setDescription(expense.description);
     setWhenValue(toDateInputValue(expense.when));
   }, [open, expense]);
 
@@ -194,6 +206,7 @@ export function ExpenseEditDialog({
     validateAmount(amount) !== undefined ||
     validatePlace(place) !== undefined ||
     validateWhen(whenValue) !== undefined ||
+    validateDescription(description) !== undefined ||
     categoryId === null;
 
   async function submitPatch() {
@@ -207,6 +220,7 @@ export function ExpenseEditDialog({
           place,
           when: whenValue,
           categoryId,
+          description,
         }),
       });
 
@@ -239,6 +253,7 @@ export function ExpenseEditDialog({
     amountValidation.onBlur();
     placeValidation.onBlur();
     whenValidation.onBlur();
+    descriptionValidation.onBlur();
     if (isFormInvalid) return;
     void submitPatch();
   }
@@ -315,6 +330,28 @@ export function ExpenseEditDialog({
           {whenValidation.error !== undefined ? (
             <p id={`${WHEN_FIELD_ID}-error`} role="alert" className="text-xs text-destructive">
               {whenValidation.error}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={DESCRIPTION_FIELD_ID} className="text-sm font-medium text-foreground">
+            Descripción
+          </label>
+          <Textarea
+            id={DESCRIPTION_FIELD_ID}
+            name={DESCRIPTION_FIELD_ID}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            onBlur={descriptionValidation.onBlur}
+            aria-invalid={descriptionValidation.error !== undefined}
+            aria-describedby={
+              descriptionValidation.error !== undefined ? `${DESCRIPTION_FIELD_ID}-error` : undefined
+            }
+          />
+          {descriptionValidation.error !== undefined ? (
+            <p id={`${DESCRIPTION_FIELD_ID}-error`} role="alert" className="text-xs text-destructive">
+              {descriptionValidation.error}
             </p>
           ) : null}
         </div>

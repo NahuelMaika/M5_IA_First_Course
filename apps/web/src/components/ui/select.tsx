@@ -56,7 +56,7 @@ function Select({ value, onValueChange, options, label }: SelectProps) {
           <SelectPrimitive.Popup
             data-slot="select-popup"
             className={cn(
-              "rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg outline-none",
+              "z-[60] rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-lg outline-none",
               "data-starting-style:scale-95 data-starting-style:opacity-0",
               "data-ending-style:scale-95 data-ending-style:opacity-0"
             )}

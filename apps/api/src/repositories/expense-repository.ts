@@ -92,6 +92,7 @@ export interface UpdateExpenseInput {
   place?: string;
   when?: Date;
   categoryId?: string;
+  description?: string;
 }
 
 /**

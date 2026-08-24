@@ -101,6 +101,9 @@ export const updateExpenseBodySchema = z
       )
       .optional(),
     categoryId: z.string().uuid().optional(),
+    // No `.min(1)`: unlike `place`, an empty Descripción is a valid value (optional field of
+    // kb.md's Modelo de Datos: Gasto) -- the PATCH must be able to clear it explicitly.
+    description: z.string().max(300).optional(),
   })
   .refine((data) => Object.keys(data).length > 0, {
     message: "at least one field must be provided",

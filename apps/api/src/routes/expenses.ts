@@ -155,6 +155,9 @@ function toUpdatePatch(body: UpdateExpenseBody): UpdateExpensePatch {
   if (body.categoryId !== undefined) {
     patch.categoryId = body.categoryId;
   }
+  if (body.description !== undefined) {
+    patch.description = body.description;
+  }
   return patch;
 }
 

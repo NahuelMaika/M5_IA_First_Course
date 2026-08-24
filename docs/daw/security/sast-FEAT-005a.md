@@ -44,6 +44,16 @@ CODE closeout. Alcance: los 12 bloques del ticket, con foco en el diff final (Bl
 
 Ninguna.
 
+## Loop 2 (Descripción en edición + fix z-index de select)
+
+- ✅ F-SAST-02: `description` sigue el mismo camino ownership-scoped que `place`/`amount` (Zod →
+  `toUpdatePatch` → `expenseRepository.update`, sin bypass de `findByIdForUser`).
+- ✅ F-SAST-06: `Textarea` es un input controlado por React (`value`/`onChange`), sin
+  `dangerouslySetInnerHTML` — mismo criterio que el resto de los campos del formulario.
+- ✅ Fix de `ui/select.tsx` (agregar `z-[60]`): cambio puramente visual/CSS, sin superficie de
+  ataque nueva, no cruza ningún trust boundary.
+- ✅ F-SAST-13/16: `pnpm audit --prod` re-ejecutado — sin vulnerabilidades conocidas.
+
 ## Resultado
 
-**PASSED** — 0 Critical, 0 High, 0 Medium sin suprimir.
+**PASSED** — 0 Critical, 0 High, 0 Medium sin suprimir (loop 1 y loop 2).

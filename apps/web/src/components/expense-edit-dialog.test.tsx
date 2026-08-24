@@ -95,14 +95,21 @@ afterEach(() => {
 });
 
 describe("ExpenseEditDialog", () => {
-  it("preloads the expense's current amount/place/date/category — AC-08", async () => {
+  it("preloads the expense's current amount/place/date/category/description — AC-08", async () => {
     mockCategoriesThenPatch(jsonResponse(200, {}));
 
-    render(<ExpenseEditDialog expense={EXPENSE} open onOpenChange={() => {}} />);
+    render(
+      <ExpenseEditDialog
+        expense={{ ...EXPENSE, description: "Nota vigente" }}
+        open
+        onOpenChange={() => {}}
+      />
+    );
 
     expect(screen.getByLabelText("Monto")).toHaveValue(2000);
     expect(screen.getByLabelText("Lugar")).toHaveValue("restaurante");
     expect(screen.getByLabelText("Fecha")).toHaveValue(EXPENSE.when.slice(0, 10));
+    expect(screen.getByLabelText("Descripción")).toHaveValue("Nota vigente");
 
     await waitForCategoryPreload();
   });
@@ -136,7 +143,79 @@ describe("ExpenseEditDialog", () => {
       place: "lugar nuevo",
       when: EXPENSE.when.slice(0, 10),
       categoryId: "cat-comida",
+      description: "",
     });
+  });
+
+  it("sends the new value in the PATCH when Descripción is edited — AC-11", async () => {
+    const user = userEvent.setup();
+    mockCategoriesThenPatch(jsonResponse(200, { ...EXPENSE, description: "Nota nueva" }));
+
+    render(<ExpenseEditDialog expense={EXPENSE} open onOpenChange={() => {}} />);
+    await waitForCategoryPreload();
+
+    const descriptionInput = screen.getByLabelText("Descripción");
+    await user.type(descriptionInput, "Nota nueva");
+
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => {
+      const patchCall = mockedApiRequest.mock.calls.find(
+        ([path]) => path === `/expenses/${EXPENSE.id}`
+      );
+      expect(patchCall).toBeDefined();
+    });
+
+    const [, patchInit] = mockedApiRequest.mock.calls.find(
+      ([path]) => path === `/expenses/${EXPENSE.id}`
+    )!;
+    expect(JSON.parse(patchInit?.body as string)).toMatchObject({ description: "Nota nueva" });
+  });
+
+  it("sends description: \"\" in the PATCH when Descripción is cleared — AC-11", async () => {
+    const user = userEvent.setup();
+    mockCategoriesThenPatch(jsonResponse(200, { ...EXPENSE, description: "" }));
+
+    render(
+      <ExpenseEditDialog
+        expense={{ ...EXPENSE, description: "Nota vigente" }}
+        open
+        onOpenChange={() => {}}
+      />
+    );
+    await waitForCategoryPreload();
+
+    const descriptionInput = screen.getByLabelText("Descripción");
+    await user.clear(descriptionInput);
+
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => {
+      const patchCall = mockedApiRequest.mock.calls.find(
+        ([path]) => path === `/expenses/${EXPENSE.id}`
+      );
+      expect(patchCall).toBeDefined();
+    });
+
+    const [, patchInit] = mockedApiRequest.mock.calls.find(
+      ([path]) => path === `/expenses/${EXPENSE.id}`
+    )!;
+    expect(JSON.parse(patchInit?.body as string)).toMatchObject({ description: "" });
+  });
+
+  it("shows an inline error and disables submit when Descripción exceeds 300 chars — AC-12", async () => {
+    const user = userEvent.setup();
+    mockCategoriesThenPatch(jsonResponse(200, {}));
+
+    render(<ExpenseEditDialog expense={EXPENSE} open onOpenChange={() => {}} />);
+    await waitForCategoryPreload();
+
+    const descriptionInput = screen.getByLabelText("Descripción");
+    await user.type(descriptionInput, "a".repeat(301));
+    await user.tab();
+
+    expect(screen.getByText(/máximo 300 caracteres/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar" })).toBeDisabled();
   });
 
   it("closes the dialog after a successful save — AC-08", async () => {

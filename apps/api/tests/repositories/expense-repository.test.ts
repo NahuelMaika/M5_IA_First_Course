@@ -386,6 +386,17 @@ describe("expenseRepository.findByIdForUser / update / remove (Block 2, spec-FEA
     expect(updated.category.name).toBe("Comida");
   });
 
+  it("update persists description, including clearing it to \"\" -- AC-11", async () => {
+    const { update } = await import("../../src/repositories/expense-repository.ts");
+    const expense = await makeExpense({});
+
+    const withDescription = await update(prisma, expense.id, { description: "Nota del gasto" });
+    expect(withDescription.description).toBe("Nota del gasto");
+
+    const cleared = await update(prisma, expense.id, { description: "" });
+    expect(cleared.description).toBe("");
+  });
+
   it("remove deletes the row, so a later lookup by that id finds nothing", async () => {
     const { remove, findByIdForUser } = await import("../../src/repositories/expense-repository.ts");
     const expense = await makeExpense({});
