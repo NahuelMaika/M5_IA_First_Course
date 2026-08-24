@@ -6,7 +6,7 @@
 | PRD | docs/daw/prd/prd-FEAT-005a.md |
 | Tier | FEATURE |
 | Date | 2026-08-23 |
-| Spec loops | 1 |
+| Spec loops | 2 |
 
 ## Summary
 
@@ -29,6 +29,7 @@ edición/eliminación; `expense-row.tsx` se mantiene presentacional.
 | FR-06 | Block 7, Block 11 |
 | FR-07 | Block 8, Block 12 |
 | FR-08 | Block 2, Block 4, Block 6 |
+| FR-09 | Block 1, Block 2, Block 6, Block 11 |
 | NFR-01 | Block 4, Block 6 (mismo p95 <3s que POST/GET existentes, sin trabajo adicional bloqueante) |
 | NFR-02 | Strategy: `routes → service → repository` en los 6 bloques de `apps/api`, mismo DI (`fastify.prisma`) que `POST`/`GET /expenses` |
 | NFR-03 | Block 7, Block 8, Block 9 (Base UI + tokens del proyecto, sin color/spacing hardcodeado); Block 12 (botones de editar/eliminar, mismo criterio de tokens + destino táctil ≥24×24px) |
@@ -68,6 +69,9 @@ RNF-08 se declaran acá explícitamente en vez de heredarlos.
 - `place`: `z.string().min(1).max(200)` (RNF-07 de `PRD.md`).
 - `when`: `z.coerce.date()`, rechazada si es futura o anterior al piso de retroactividad de 12 meses (RF-27/RF-28 de `PRD.md`) — reutiliza la misma regla que `packages/domain/src/temporal.ts` aplica en la creación, reimplementada acá en Zod porque `apps/web` no depende de `@ggasia/domain` (confirmado en el impact scan) y el schema de `apps/api` tampoco pasa por `parseExpense` en este flujo.
 - `categoryId`: `z.string().uuid()`.
+- `description`: `z.string().max(300)` (RNF-07 de `PRD.md`) — **sin `.min(1)`**: a diferencia de
+  `place`, una Descripción vacía es un valor válido (campo opcional del Modelo de Datos: Gasto de
+  `kb.md`), así que el PATCH debe poder limpiarla explícitamente con `description: ""`.
 - Objeto completo: `.refine(obj => Object.keys(obj).length > 0)` — un PATCH vacío se rechaza con 400.
 
 **Error handling**
@@ -76,6 +80,8 @@ RNF-08 se declaran acá explícitamente en vez de heredarlos.
 **Required tests**
 - [ ] acepta un PATCH con un solo campo (`place`) — AC-01
 - [ ] acepta un PATCH con `categoryId` — AC-04
+- [ ] acepta un PATCH con `description` — AC-11
+- [ ] acepta un PATCH que limpia `description` a `""` — AC-11
 - [ ] rechaza un PATCH vacío `{}`
 - [ ] rechaza `amount` negativo o con más de 2 decimales
 - [ ] rechaza `amount` > 999999999.99
@@ -83,9 +89,10 @@ RNF-08 se declaran acá explícitamente en vez de heredarlos.
 - [ ] rechaza `when` futura
 - [ ] rechaza `when` anterior al piso de retroactividad de 12 meses
 - [ ] rechaza `categoryId` que no es un UUID válido
+- [ ] rechaza `description` de más de 300 caracteres — AC-12
 
 **Completion criterion**
-`pnpm --filter @ggasia/api test schemas/expense` pasa con los 9 casos arriba.
+`pnpm --filter @ggasia/api test schemas/expense` pasa con los 12 casos arriba.
 
 ## Block 2 — expense-repository: findByIdForUser, update, remove
 
@@ -97,7 +104,7 @@ RNF-08 se declaran acá explícitamente en vez de heredarlos.
   **mitigación R1 del threat model**: el filtro por `userId` va en la MISMA query de Prisma, nunca
   un `findUnique({id})` seguido de comparar `userId` en JS. Devuelve `null` si no matchea ninguno de
   los dos (gasto inexistente O de otro usuario, sin distinguir).
-- `update(prisma, id, data)`: `prisma.expense.update({ where: { id }, data, include: { category: true } })` — recibe un `id` ya verificado por `findByIdForUser` en la capa de servicio (Block 4), este repositorio no re-verifica ownership.
+- `update(prisma, id, data)`: `prisma.expense.update({ where: { id }, data, include: { category: true } })` — recibe un `id` ya verificado por `findByIdForUser` en la capa de servicio (Block 4), este repositorio no re-verifica ownership. `UpdateExpenseInput` (Loop 2) suma `description?: string` a los campos opcionales ya existentes (`amount`, `place`, `when`, `categoryId`) — pasa a Prisma sin transformación, igual que el resto.
 - `remove(prisma, id)`: `prisma.expense.delete({ where: { id } })` — borrado físico (FR-05, RF-44 de `PRD.md`).
 
 **Error handling**
@@ -111,10 +118,11 @@ RNF-08 se declaran acá explícitamente en vez de heredarlos.
 - [ ] `findByIdForUser` devuelve `null` cuando el `id` no existe
 - [ ] `findByIdForUser` devuelve `null` cuando el `id` existe pero pertenece a otro `userId`
 - [ ] `update` persiste los campos pasados y devuelve la categoría incluida
+- [ ] `update` persiste `description`, incluyendo limpiarla a `""` — AC-11
 - [ ] `remove` elimina la fila (una consulta posterior por ese `id` no la encuentra)
 
 **Completion criterion**
-`pnpm --filter @ggasia/api test repositories/expense-repository` pasa, incluyendo los 5 casos
+`pnpm --filter @ggasia/api test repositories/expense-repository` pasa, incluyendo los 6 casos
 arriba, contra la base de test real (mismo criterio que el resto de `expense-repository.test.ts`).
 
 ## Block 3 — category-repository: findVisibleForUserWithId
@@ -164,6 +172,7 @@ arriba.
 
 **Required tests**
 - [ ] `updateExpense` actualiza Monto/Lugar/Fecha de un gasto propio — AC-01
+- [ ] `updateExpense` actualiza la Descripción de un gasto propio, incluyendo limpiarla a `""` — AC-11
 - [ ] `updateExpense` devuelve `"not_found"` para un gasto que no existe
 - [ ] `updateExpense` devuelve `"not_found"` para un gasto de otro usuario — AC-02
 - [ ] `updateExpense` conserva la categoría vigente cuando el patch sólo trae `place` — AC-03
@@ -176,7 +185,7 @@ arriba.
 - [ ] `updateExpense`/`deleteExpense` devuelven `"internal_error"` y loguean sin exponer el error real ante una falla de Prisma simulada
 
 **Completion criterion**
-`pnpm --filter @ggasia/api test services/expense-service` pasa, incluyendo los 11 casos arriba.
+`pnpm --filter @ggasia/api test services/expense-service` pasa, incluyendo los 12 casos arriba.
 
 ## Block 5 — category-service: listCategories
 
@@ -216,6 +225,8 @@ arriba.
   - Errores: 400 (body inválido o vacío), 401 (sin sesión), 404 (`{error:"not_found"}`, gasto
     inexistente o ajeno), 422 (`{error:"invalid_category"}`, `categoryId` no visible para el
     usuario), 500 (`{error:"internal_error"}`).
+  - `toUpdatePatch` (Loop 2): suma `description` al mapeo hacia `UpdateExpensePatch` — sin
+    conversión, se copia tal cual la deja `updateExpenseBodySchema` (Block 1).
 
 - `DELETE /expenses/:id`
   - Request: `:id` es un UUID, sin body.
@@ -235,6 +246,8 @@ arriba.
 
 **Required tests**
 - [ ] `PATCH /expenses/:id` devuelve 200 y el body actualizado — AC-01
+- [ ] `PATCH /expenses/:id` con `description` devuelve 200 con la descripción actualizada — AC-11
+- [ ] `PATCH /expenses/:id` con `description` de más de 300 caracteres devuelve 400 — AC-12
 - [ ] `PATCH /expenses/:id` devuelve 400 con un body vacío
 - [ ] `PATCH /expenses/:id` devuelve 401 sin cookie de sesión
 - [ ] `PATCH /expenses/:id` devuelve 404 para un gasto ajeno — AC-02
@@ -250,7 +263,7 @@ arriba.
 - [ ] Integración: crear gasto → editarlo → verificarlo en `GET /expenses` → borrarlo → verificar que ya no aparece
 
 **Completion criterion**
-`pnpm --filter @ggasia/api test` (suite completa) pasa, incluyendo los 14 casos arriba.
+`pnpm --filter @ggasia/api test` (suite completa) pasa, incluyendo los 16 casos arriba.
 
 ## Block 7 — ui/dialog.tsx
 
@@ -318,6 +331,14 @@ Envuelve `@base-ui/react/select`. Props: `value`, `onValueChange`, `options: {va
 `label`. Genérico — no acoplado a "categoría" en el nombre ni en el tipo, para que
 `prd-FEAT-005b.md` lo reutilice sin modificarlo.
 
+**Bug fix (Loop 2)**: `select-popup` (el `SelectPrimitive.Popup` dentro del `Portal`) no llevaba
+ninguna clase `z-*` — quedaba en la capa `z-auto`, que en CSS pinta SIEMPRE por debajo de cualquier
+hermano con `z-index` positivo (como `dialog-backdrop`/`dialog-popup` de `ui/dialog.tsx`, ambos en
+`z-50`), sin importar el orden en el DOM. Efecto observado: al usar el `Select` de categoría dentro
+de `expense-edit-dialog.tsx` (Block 11), el desplegable de opciones renderizaba detrás del backdrop
+del diálogo, invisible/inoperable. Fix: agregar `z-[60]` a `select-popup` — estrictamente por encima
+del `z-50` del diálogo, para no depender del orden de montaje de los portales.
+
 **Error handling**
 - N/A — recibe sus opciones ya resueltas vía props; no realiza llamadas a la API ni valida su propio
   input. Un `options` vacío renderiza un select sin opciones, no es un estado de error.
@@ -326,9 +347,14 @@ Envuelve `@base-ui/react/select`. Props: `value`, `onValueChange`, `options: {va
 - [ ] renderiza las opciones pasadas
 - [ ] seleccionar una opción invoca `onValueChange` con su `value`
 - [ ] operable por teclado (RNF-13 de `PRD.md`)
+- [ ] `select-popup` lleva una clase `z-*` con valor numérico mayor al `z-50` de `dialog-popup`/
+      `dialog-backdrop` (regresión explícita del bug de stacking — Loop 2)
+- [ ] al montar `Select` dentro de un `Dialog` abierto (mismo anidamiento que Block 11) y abrir el
+      desplegable, su opción resulta clickeable (`fireEvent.click` sobre la opción invoca
+      `onValueChange`) — test de integración de stacking, no sólo de clase CSS
 
 **Completion criterion**
-`pnpm --filter @ggasia/web test select` pasa, incluyendo los 3 casos arriba.
+`pnpm --filter @ggasia/web test select` pasa, incluyendo los 5 casos arriba.
 
 ## Block 10 — Hook de validación por campo
 
@@ -364,17 +390,19 @@ Oculta el error apenas el valor pasa a ser válido (RF-81 de `PRD.md`).
 
 **Logic**
 Usa `dialog.tsx` (Block 7), `select.tsx` (Block 9) para el picker de categoría (poblado con
-`GET /categories`, Block 6), y `use-field-validation.ts` (Block 10) para Monto/Lugar/Fecha.
-Precarga los valores vigentes del gasto. Al enviar, llama `apiRequest(`/expenses/${id}`, {method:
-"PATCH", body: JSON.stringify(patch)})`. Cierra automáticamente en éxito (comportamiento heredado de
-Block 7). Muestra el error de la API en una notificación emergente (RF-64 de `PRD.md`, vía el módulo
-de notificaciones existente).
+`GET /categories`, Block 6), y `use-field-validation.ts` (Block 10) para Monto/Lugar/Fecha/
+Descripción. Precarga los valores vigentes del gasto, incluyendo Descripción (Loop 2 — campo
+ausente en la v1.0 de este bloque, ver `prd-FEAT-005a.md` v1.1). Al enviar, llama
+`apiRequest(`/expenses/${id}`, {method: "PATCH", body: JSON.stringify(patch)})`. Cierra
+automáticamente en éxito (comportamiento heredado de Block 7). Muestra el error de la API en una
+notificación emergente (RF-64 de `PRD.md`, vía el módulo de notificaciones existente).
 
 **Input validation**
 - Monto: mismas reglas que `updateExpenseBodySchema` (Block 1) aplicadas vía `use-field-validation.ts`
   (Block 10) — positivo, máximo 2 decimales, tope 999999999.99.
 - Lugar: 1 a 200 caracteres.
 - Fecha: no futura, no anterior al piso de retroactividad de 12 meses.
+- Descripción (Loop 2): 0 a 300 caracteres — a diferencia de Lugar, vacía es válida (campo opcional).
 - Categoría: sólo valores presentes en la lista que devuelve `GET /categories` (Block 6) — el
   `select.tsx` (Block 9) no permite construir un valor arbitrario.
 
@@ -385,14 +413,17 @@ de notificaciones existente).
   que se corrija.
 
 **Required tests**
-- [ ] precarga Monto/Lugar/Fecha/Categoría vigentes — AC-08
+- [ ] precarga Monto/Lugar/Fecha/Categoría/Descripción vigentes — AC-08
 - [ ] envía sólo los campos modificados (o todos, según diseño final del form) al `PATCH`
 - [ ] cierra el diálogo tras un guardado exitoso — AC-08
 - [ ] muestra el error de validación de un campo en cuanto pierde el foco (Block 10)
 - [ ] muestra una notificación de error si el `PATCH` falla, sin cerrar el diálogo
+- [ ] editar Descripción y guardar envía el nuevo valor en el `PATCH` — AC-11
+- [ ] vaciar Descripción y guardar envía `description: ""` en el `PATCH` — AC-11
+- [ ] una Descripción de más de 300 caracteres muestra error inline y deshabilita el envío — AC-12
 
 **Completion criterion**
-`pnpm --filter @ggasia/web test expense-edit-dialog` pasa, incluyendo los 5 casos arriba.
+`pnpm --filter @ggasia/web test expense-edit-dialog` pasa, incluyendo los 8 casos arriba.
 
 ## Block 12 — Triggers de edición/eliminación en la lista
 
@@ -437,10 +468,11 @@ bloque).
 
 ## Final verification
 
-- `pnpm test` (suite completa del monorepo) pasa, incluyendo los ~73 tests nuevos/modificados de los
-  12 bloques.
+- `pnpm test` (suite completa del monorepo) pasa, incluyendo los ~84 tests nuevos/modificados de los
+  12 bloques (Loop 2 suma ~11 tests: description en schema/repo/service/route/dialog + regresión de
+  z-index del select).
 - `pnpm -r typecheck` pasa (Stack de `AGENTS.md`).
-- Todas las 10 AC de `prd-FEAT-005a.md` (AC-01 a AC-10) están cubiertas por al menos un test.
+- Todas las 12 AC de `prd-FEAT-005a.md` (AC-01 a AC-12) están cubiertas por al menos un test.
 - Las 4 mitigaciones de `threat-FEAT-005a.md` (R1, R2, R3, R4) están implementadas y testeadas —
   R5 queda como riesgo aceptado, sin código que lo mitigue.
 - `daw-security-sast` corre sin hallazgos abiertos antes del cierre de CODE.
