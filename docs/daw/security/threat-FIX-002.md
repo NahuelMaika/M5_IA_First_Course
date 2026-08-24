@@ -7,8 +7,11 @@
 
 ## Component under change
 
-`apps/web/src/app/layout.tsx` — root layout de Next.js App Router. Cambio propuesto: agregar la
-clase Tailwind `isolate` (`isolation: isolate`) al elemento `<body>`.
+Loop 1: `apps/web/src/app/layout.tsx` — root layout de Next.js App Router. Cambio: agregar la clase
+Tailwind `isolate` (`isolation: isolate`) al elemento `<body>`. Ya implementado.
+
+Loop 2: `apps/web/src/components/ui/select.tsx` — agregar la clase `z-[60]` al
+`SelectPrimitive.Positioner`. Mismo tipo de cambio: una clase CSS estática, sin lógica.
 
 ## Attack surfaces identificadas
 
@@ -50,6 +53,11 @@ Ninguno de nivel CRITICAL o HIGH. Riesgo residual clasificado LOW:
 
 No hay riesgos CRITICAL/HIGH. El único riesgo (LOW) no requiere mitigación activa — es un cambio
 CSS aislado, alineado con la recomendación oficial de Base UI para este mismo escenario.
+
+**Re-validación loop 2:** el cambio agregado (`z-[60]` en `SelectPrimitive.Positioner`,
+`select.tsx`) es del mismo tipo — una clase CSS estática en un componente cliente ya existente, sin
+input nuevo, sin dato sensible, sin cambio de auth. El análisis STRIDE de arriba aplica sin cambios;
+no se identifica ningún riesgo adicional.
 
 ---
 
