@@ -52,7 +52,11 @@ function Select({ value, onValueChange, options, label }: SelectProps) {
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
-        <SelectPrimitive.Positioner data-slot="select-positioner" sideOffset={4}>
+        <SelectPrimitive.Positioner
+          data-slot="select-positioner"
+          className="z-[60]"
+          sideOffset={4}
+        >
           <SelectPrimitive.Popup
             data-slot="select-popup"
             className={cn(

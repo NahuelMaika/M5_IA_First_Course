@@ -4,12 +4,13 @@
 |-------|-------|
 | Ticket | FIX-002 |
 | Date | 2026-08-24 |
-| Scope | `apps/web/src/app/layout.tsx`, `apps/web/src/app/layout.test.tsx` |
+| Scope loop 1 | `apps/web/src/app/layout.tsx`, `apps/web/src/app/layout.test.tsx` |
+| Scope loop 2 | `apps/web/src/components/ui/select.tsx`, `apps/web/src/components/ui/select.test.tsx` |
 
 ## Result: PASSED
 
-Change is a single static CSS class (`isolate`) added to the root `<body>`, plus its regression
-test. No new inputs, no data flow, no dynamic behavior.
+Change is two static CSS classes (`isolate` on the root `<body>`, `z-[60]` on the Select's
+Positioner), plus their regression tests. No new inputs, no data flow, no dynamic behavior.
 
 ## Findings
 
@@ -36,7 +37,8 @@ test. No new inputs, no data flow, no dynamic behavior.
 - ✅ F-SAST-15 error handling leaking internals: n/a, no error handling touched.
 
 **Dependencies**
-- ✅ F-SAST-13/16: `pnpm audit --prod` in `apps/web` — no known vulnerabilities.
+- ✅ F-SAST-13/16: `pnpm audit --prod` in `apps/web` — no known vulnerabilities (verified loop 1,
+  no dependency changes in loop 2).
 
 ## Suppressions
 
@@ -45,7 +47,7 @@ None.
 ## Consistent with threat model
 
 Matches `docs/daw/security/threat-FIX-002.md`: 0 Critical/High, 1 LOW accepted without mitigation
-(pure CSS change, no attack surface introduced).
+(pure CSS change, no attack surface introduced). Re-validated for loop 2 — same conclusion.
 
 ## Next
 
