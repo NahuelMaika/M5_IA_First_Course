@@ -6,10 +6,11 @@
 | Tier | FIX |
 | Date | 2026-08-24 |
 | Branch | fix/FIX-002-select-popup-position |
-| Implementation commit | b499edb |
+| Implementation commit (loop 1) | b499edb |
+| Implementation commit (loop 2) | 4412a23 |
 | Verified by | `daw-module-verifier` agent (independent, did not write the code) |
 
-## Result: PASSED (0 FAILs, 1 WARN)
+## Result loop 1: PASSED (0 FAILs, 1 WARN)
 
 ## Fix-plan steps (F-VER-01)
 
@@ -52,9 +53,58 @@
   The one documented LOW risk (third-party widget appended outside `<body>`) does not apply today —
   the project embeds no external scripts (confirmed against `AGENTS.md`).
 
-## Total
+## Total loop 1
 
 11 PASSes, 0 FAILs, 1 WARN (documented, non-blocking).
+
+---
+
+## Result loop 2: PASSED (0 FAILs, 0 WARNs)
+
+Loop 1's fix (`isolate` on `<body>`) was necessary but insufficient — manual testing after the PR
+was opened showed the Select popup still rendered behind the Dialog. Loop 2 identified and fixed
+the real root cause: `apps/web/src/components/ui/select.tsx:55-59`.
+
+## Fix-plan steps loop 2 (F-VER-01)
+
+- ✅ Step 3: `z-[60]` added to `SelectPrimitive.Positioner` (`select.tsx:55-59`) — exact node/class
+  described in the fix-plan. `Popup`'s existing `z-[60]` kept, as documented.
+- ✅ Step 4: `select.test.tsx` assertion on `[data-slot="select-positioner"]` added, separate from
+  the pre-existing `select-popup` assertion.
+
+## Regression test loop 2 (F-VER-02)
+
+- ✅ Exists: `select.test.tsx:126-149`, "select-positioner carries a z-* class with a numeric value
+  greater than dialog-popup's z-50".
+- ✅ Tests the real root cause: asserts on `select-positioner`, not just `select-popup` — the exact
+  gap the RCA flagged in the loop-1-era test (it would have stayed green even with the actual
+  defect, since it never checked the node that matters).
+- ✅ Passes with the fix applied — confirmed in the full run (138/138 passed).
+- ✅ Coherent with the fix: both assertions (Popup z-60, Positioner z-60) coexist in the suite,
+  matching `select.tsx`'s current markup exactly.
+
+## No regressions
+
+- ✅ Loop 1 fix intact — `layout.tsx` diff between commits `b499edb` and `4412a23` is empty for that
+  file.
+- ✅ `layout.test.tsx` still PASSED.
+- ✅ "select-popup carries a z-* class..." (FEAT-005a loop 2) still PASSED.
+- ✅ "is clickable when mounted inside an open Dialog" still PASSED (documented jsdom limitation,
+  expected — does not hit-test real stacking).
+
+## Full suite loop 2
+
+`apps/web`, excluding `client.test.ts` (out-of-scope `next build` test, per the same agreement as
+loop 1): 19/19 test files, 138/138 tests PASSED. Typecheck clean.
+
+## Manual confirmation
+
+User confirmed in the browser (real `pnpm dev` session) that the Categoría Select now renders and
+is clickable correctly inside the expense edit Dialog.
+
+## Total loop 2
+
+13 PASSes, 0 FAILs, 0 WARNs.
 
 ## Next
 
