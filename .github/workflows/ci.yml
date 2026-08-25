@@ -26,11 +26,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Debug TypeScript install
-        run: |
-          pnpm exec tsc --version
-          pnpm ls typescript --depth 0
-          ls -la apps/web/node_modules/@types/node 2>&1 || echo "MISSING @types/node"
-
       - name: Run tests
         run: pnpm test
