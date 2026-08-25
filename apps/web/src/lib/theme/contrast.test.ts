@@ -14,7 +14,7 @@ const AA_LARGE_TEXT_MIN_RATIO = 3;
 
 describe("contrast ratio formula", () => {
   it("computes maximum contrast for black on white", () => {
-    expect(contrastRatio("#000000", "#FFFFFF")).toBeCloseTo(999, 0);
+    expect(contrastRatio("#000000", "#FFFFFF")).toBeCloseTo(21, 0);
   });
 
   it("computes minimum contrast for identical colors", () => {
