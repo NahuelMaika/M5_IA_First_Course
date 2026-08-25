@@ -65,3 +65,56 @@ export async function findManyForUser(
     include: { category: true },
   });
 }
+
+export interface FindByIdForUserParams {
+  id: string;
+  userId: string;
+}
+
+/**
+ * Looks up an expense by `id` scoped to `userId` in the SAME Prisma query (spec-FEAT-005a Block 2,
+ * mitigation R1 of the threat model) -- never a `findUnique({ id })` followed by comparing `userId`
+ * in JS. Returns `null` both when the expense does not exist and when it belongs to another user,
+ * without distinguishing between the two cases.
+ */
+export async function findByIdForUser(
+  prisma: PrismaClient,
+  { id, userId }: FindByIdForUserParams,
+): Promise<Expense | null> {
+  return prisma.expense.findFirst({ where: { id, userId } });
+}
+
+/** The only fields a PATCH can touch (spec-FEAT-005a Block 1's `updateExpenseBodySchema`) --
+ * narrower than `Prisma.ExpenseUpdateInput` on purpose, same pattern as `CreateExpenseInput`: this
+ * repository takes plain scalar values, never Prisma's relation-write/scalar-operator shapes. */
+export interface UpdateExpenseInput {
+  amount?: Prisma.Decimal;
+  place?: string;
+  when?: Date;
+  categoryId?: string;
+  description?: string;
+}
+
+/**
+ * Updates an expense already verified to belong to the caller by the service layer (Block 4), via
+ * `findByIdForUser` -- this repository does not re-verify ownership. A P2025 from Prisma (record
+ * not found) shouldn't happen in practice for that reason, and is not caught here: it re-throws
+ * as-is (same criterion as `category-repository.ts`'s `create` re-throwing P2002 -- this repository
+ * does not silence Prisma errors).
+ */
+export async function update(
+  prisma: PrismaClient,
+  id: string,
+  data: UpdateExpenseInput,
+): Promise<ExpenseWithCategory> {
+  return prisma.expense.update({ where: { id }, data, include: { category: true } });
+}
+
+/**
+ * Physically deletes an expense (FR-05, RF-44 of PRD.md) already verified to belong to the caller
+ * by the service layer (Block 4). Same P2025 criterion as `update`: not caught here, re-thrown
+ * as-is.
+ */
+export async function remove(prisma: PrismaClient, id: string): Promise<Expense> {
+  return prisma.expense.delete({ where: { id } });
+}

@@ -59,6 +59,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   See `docs/daw/security/threat-FEAT-004b.md` for the two accepted CSRF risks (login and
   logout/expenses), mitigated the same way as FEAT-004a: required `Content-Type: application/json`
   plus single-origin CORS blocks a simple cross-origin form submission.
+- [FEAT-005a] Edit and delete for expenses. `apps/api`: `PATCH /expenses/:id` (partial update —
+  amount, place, date, description and/or category, at least one field required) and
+  `DELETE /expenses/:id`, both scoped to the authenticated user's own expenses (an expense that
+  exists but belongs to another user responds with the same ambiguous `not_found` as one that
+  does not exist at all — see `docs/daw/security/threat-FEAT-005a.md`, R1/R2). `apps/web`: an
+  edit dialog (`expense-edit-dialog.tsx`, built on new `ui/dialog.tsx` and `ui/select.tsx`
+  wrappers around Base UI, plus a shared `useFieldValidation` hook) and a delete confirmation
+  (`ui/confirm-dialog.tsx`) wired into the expense list — each row gets edit/delete buttons, both
+  dialogs mount once at list level, and a successful edit or delete updates the list in place
+  without a reload, with a brief success/error notification through the centralized `notify()`
+  module.
 
 ### Changed
 
@@ -74,6 +85,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   marker could tokenize into loose digit fragments and pass a spurious amount, turning the
   expected 422 into a false 201 (~2/3 of runs) and leaving orphan rows in the shared test
   database. Same fix already applied to AC-04/AC-05: strip the hyphens.
+- [FEAT-005a] `ui/select.tsx`'s popup had no `z-index`, so it rendered behind
+  `ui/dialog.tsx`'s `z-50` backdrop — the category picker inside the edit dialog was invisible
+  and unusable. Found in manual testing. Fixed with `z-[60]`, strictly above the dialog's layer
+  regardless of portal mount order.
 - [FIX-001] `apps/web`'s HTTP client (`lib/api/client.ts`) never actually sent a request from the
   browser: `NEXT_PUBLIC_API_URL` was read via `process.env[name]` (a dynamic/bracket lookup), which
   Next.js's build-time env inlining never picks up — only a literal `process.env.NEXT_PUBLIC_*`
@@ -82,3 +97,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   redirect (FEAT-004b) never triggered either. Fixed by reading the var with a literal access.
   Regression-tested against a real `next build` (not just Node/Vitest, which can't tell the two
   notations apart) pointed at an isolated `distDir` so it never touches a live `next dev`'s output.
+- [FIX-002] Editing a gasto's Categoría: the Select's popup opened at the correct position but
+  rendered visually behind the edit Dialog, so pointer clicks on the options "passed through" and
+  the Dialog read them as an outside-press and closed before anything could be selected. Two root
+  causes, found across two loops: (1) the root `<body>` never declared `isolation: isolate`, so
+  Base UI's Dialog and Select portals (both appended to `document.body`) had no guaranteed shared
+  stacking context for their `z-index` values to compare against — fixed by adding `isolate` to the
+  root `<body>` in `apps/web/src/app/layout.tsx`; (2) that alone wasn't enough — Base UI's
+  `SelectPrimitive.Positioner` renders with `position: fixed`, which creates its own stacking
+  context regardless of `z-index`, so the `z-[60]` already present on the child `Popup` could never
+  escape it to compete against the Dialog's `z-50`. Fixed by adding `z-[60]` to the `Positioner`
+  itself in `apps/web/src/components/ui/select.tsx`. Confirmed working end-to-end in the browser.

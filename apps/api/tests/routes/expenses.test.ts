@@ -59,11 +59,17 @@ vi.mock("@ggasia/domain", async (importOriginal) => {
 // `GET /expenses` tests (Block 4, spec-FEAT-003a) exercise the route layer only: `listExpenses`
 // (Block 3) already has its own dedicated test suite, so it is mocked here to isolate query
 // validation and HTTP response mapping without re-testing ordering/repository concerns.
+// `PATCH`/`DELETE /expenses/:id` tests (Block 6, spec-FEAT-005a) follow the same reasoning:
+// `updateExpense`/`deleteExpense` already have their own dedicated test suite
+// (tests/services/expense-service.test.ts), so they are mocked here too, isolating param/body
+// validation and HTTP response mapping.
 vi.mock("../../src/services/expense-service.ts", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../src/services/expense-service.ts")>();
   return {
     ...actual,
     listExpenses: vi.fn(),
+    updateExpense: vi.fn(),
+    deleteExpense: vi.fn(),
   };
 });
 
@@ -567,6 +573,136 @@ describe("auth boundary regression -- x-user-id is fully dead (Block 11, spec-FE
 
     expect(response.statusCode).toBe(200);
     expect(listExpenses).toHaveBeenCalledWith(expect.any(Object), TEST_USER_ID, 50);
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+});
+
+describe("PATCH /expenses/:id (Block 6, spec-FEAT-005a)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 400 with an empty body, and never invokes updateExpense", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/expenses/${randomUUID()}`,
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(updateExpense).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 401 when there is no session cookie, and never invokes updateExpense", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/expenses/${randomUUID()}`,
+      payload: { place: "kiosco" },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(updateExpense).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 422 when the service reports invalid_category", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(updateExpense).mockResolvedValue({ outcome: "invalid_category" });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/expenses/${randomUUID()}`,
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      payload: { categoryId: randomUUID() },
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ error: "invalid_category" });
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 500 with a generic body when the service reports internal_error, without leaking it", async () => {
+    const { updateExpense } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(updateExpense).mockResolvedValue({ outcome: "internal_error" });
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: `/expenses/${randomUUID()}`,
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      payload: { place: "kiosco" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: "internal_error" });
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+});
+
+describe("DELETE /expenses/:id (Block 6, spec-FEAT-005a)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 401 when there is no session cookie, and never invokes deleteExpense", async () => {
+    const { deleteExpense } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const response = await app.inject({ method: "DELETE", url: `/expenses/${randomUUID()}` });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(deleteExpense).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 500 with a generic body when the service reports internal_error, without leaking it", async () => {
+    const { deleteExpense } = await import("../../src/services/expense-service.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+    vi.mocked(deleteExpense).mockResolvedValue({ outcome: "internal_error" });
+
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/expenses/${randomUUID()}`,
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: "internal_error" });
 
     await app.close();
   }, TEST_TIMEOUT_MS);

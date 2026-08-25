@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiRequest } from "@/lib/api/client";
+import { notify } from "@/lib/notifications/notifications";
 import Page from "@/app/page";
 
 import { ExpenseList } from "./expense-list";
@@ -27,6 +28,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const mockedApiRequest = vi.mocked(apiRequest);
+const mockedNotify = vi.mocked(notify);
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -69,6 +71,7 @@ const EXPENSES_BODY = {
 afterEach(() => {
   cleanup();
   mockedApiRequest.mockReset();
+  mockedNotify.mockClear();
   mockedPush.mockClear();
 });
 
@@ -228,23 +231,27 @@ describe("Page — full screen (Block 9)", () => {
     await screen.findByRole("list", { name: /gastos/i });
 
     // The list already has data (no empty-state button) and loaded successfully (no retry
-    // button), so the screen's interactive controls are Block 6's `LogoutButton` plus the form's
-    // textarea and its submit button -- confirmed by counting every native focusable element on
-    // the page.
+    // button), so the screen's interactive controls are Block 6's `LogoutButton`, the form's
+    // textarea and its submit button, plus each row's edit/delete buttons added in Block 12
+    // (spec-FEAT-005a.md) -- confirmed by counting every native focusable element on the page.
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(3);
+    expect(focusableElements).toHaveLength(7);
 
     // Neither `LogoutButton` nor the form's controls set an explicit `tabIndex`, so tab order
     // follows DOM order. In `page.tsx`, `<LogoutButton/>` sits in the header row above
-    // `<ExpenseForm/>`, so it is reached first, followed by the textarea and then the submit
-    // button.
+    // `<ExpenseForm/>`, so it is reached first, followed by the textarea, the submit button, and
+    // then each row's edit/delete buttons in list order (Almuerzo, then Ibuprofeno).
     expect(focusableElements[0]).toHaveAccessibleName(/cerrar sesión/i);
     expect(focusableElements[1].tagName).toBe("TEXTAREA");
     expect(focusableElements[2]).toHaveAttribute("type", "submit");
+    expect(focusableElements[3]).toHaveAccessibleName(/editar almuerzo/i);
+    expect(focusableElements[4]).toHaveAccessibleName(/eliminar almuerzo/i);
+    expect(focusableElements[5]).toHaveAccessibleName(/editar ibuprofeno/i);
+    expect(focusableElements[6]).toHaveAccessibleName(/eliminar ibuprofeno/i);
 
     for (const element of focusableElements) {
       await user.tab();
@@ -273,13 +280,16 @@ describe("Page — full screen (Block 9)", () => {
       // so this narrows to what IS observable from the DOM at this width: no element opts into
       // horizontal scrolling, and no element carries a fixed pixel width that could overflow a
       // 360px viewport regardless of content -- both would defeat NFR-02/RF-74 at any width.
+      // Block 12 (spec-FEAT-005a.md): each row's edit/delete buttons render Lucide `<svg>` icons,
+      // whose `className` is an `SVGAnimatedString` (not a plain string, unlike every HTML
+      // element here) -- normalized via `getAttribute("class")` so this loop covers SVG nodes too
+      // instead of silently skipping them.
       const everyElement = document.querySelectorAll<HTMLElement>("*");
       for (const element of everyElement) {
-        expect(element.className).not.toMatch(/overflow-x-(auto|scroll)/);
+        const className = element.getAttribute("class") ?? "";
+        expect(className).not.toMatch(/overflow-x-(auto|scroll)/);
         expect(element.getAttribute("style") ?? "").not.toMatch(/width\s*:\s*\d/);
-        if (typeof element.className === "string") {
-          expect(element.className).not.toMatch(/\[[^\]]*[0-9.]+(px|rem|em)[^\]]*\]/);
-        }
+        expect(className).not.toMatch(/\[[^\]]*[0-9.]+(px|rem|em)[^\]]*\]/);
       }
 
       cleanup();
@@ -292,13 +302,14 @@ describe("Page — full screen (Block 9)", () => {
     await screen.findByRole("list", { name: /gastos/i });
 
     // Same universe as AC-14: the list already has data, so the screen's interactive controls
-    // are `LogoutButton` plus the form's textarea and its submit button.
+    // are `LogoutButton`, the form's textarea and its submit button, plus each row's edit/delete
+    // buttons (Block 12, spec-FEAT-005a.md).
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(3);
+    expect(focusableElements).toHaveLength(7);
 
     // jsdom does not run a real layout engine, so pixel geometry (getBoundingClientRect) is
     // never real here -- verify the 24px CSS floor via the Tailwind spacing-scale classes that
@@ -394,5 +405,209 @@ describe("Page — end-to-end wiring through the real form and list (Block 9, ro
 
     const textarea = screen.getByRole("textbox", { name: /gasto/i });
     expect(textarea).toHaveFocus();
+  });
+});
+
+// Block 12 (spec-FEAT-005a.md): edit/delete triggers wired at list level. `expense-row.tsx` stays
+// presentational -- its own callback contract (`onEdit`/`onDelete`) is covered in
+// expense-row.test.tsx -- these tests exercise the real `expense-edit-dialog.tsx` (Block 11) and
+// `confirm-dialog.tsx` (Block 8), both mounted ONCE by `expense-list.tsx`, plus the
+// `DELETE /expenses/:id` call this block owns and its error handling.
+const CATEGORIES_BODY = {
+  categories: [
+    { id: "cat-comida", name: "Comida", active: true },
+    { id: "cat-salud", name: "Salud", active: true },
+  ],
+};
+
+describe("ExpenseList — edit/delete triggers (Block 12)", () => {
+  it("opens the edit dialog preloaded with the clicked expense's data", async () => {
+    mockedApiRequest.mockImplementation(async (path) => {
+      if (path === "/expenses") return jsonResponse(200, EXPENSES_BODY);
+      if (path === "/categories") return jsonResponse(200, CATEGORIES_BODY);
+      throw new Error(`Unexpected apiRequest call: ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(list).getByRole("button", { name: /editar almuerzo/i }));
+
+    expect(await screen.findByText("Editar gasto")).toBeInTheDocument();
+    expect(screen.getByLabelText("Monto")).toHaveValue(2000);
+    expect(screen.getByLabelText("Lugar")).toHaveValue("restaurante");
+  });
+
+  it("opens the delete confirmation with the clicked expense's name", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(200, EXPENSES_BODY));
+    const user = userEvent.setup();
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(list).getByRole("button", { name: /eliminar almuerzo/i }));
+
+    expect(await screen.findByText("Eliminar Almuerzo")).toBeInTheDocument();
+    expect(screen.getByText(/¿confirmás que querés eliminar "almuerzo"/i)).toBeInTheDocument();
+  });
+
+  it("calls DELETE and removes the expense from the list when the deletion is confirmed", async () => {
+    mockedApiRequest.mockImplementation(async (path, init) => {
+      if (path === "/expenses" && init === undefined) return jsonResponse(200, EXPENSES_BODY);
+      if (path === "/expenses/1" && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected apiRequest call: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+
+    await user.click(within(list).getByRole("button", { name: /eliminar almuerzo/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => {
+      expect(within(list).queryByText("Almuerzo")).not.toBeInTheDocument();
+    });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+    expect(mockedApiRequest).toHaveBeenCalledWith(
+      "/expenses/1",
+      expect.objectContaining({ method: "DELETE" })
+    );
+  });
+
+  // AC-06
+  it("does not call DELETE and leaves the list unchanged when the deletion is cancelled — AC-06", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(200, EXPENSES_BODY));
+    const user = userEvent.setup();
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(list).getByRole("button", { name: /eliminar almuerzo/i }));
+    await screen.findByText("Eliminar Almuerzo");
+
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() => expect(screen.queryByText("Eliminar Almuerzo")).not.toBeInTheDocument());
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText("Almuerzo")).toBeInTheDocument();
+    // Only the initial `GET /expenses` -- no `DELETE` call ever went out.
+    expect(mockedApiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error notification and keeps the expense in the list when DELETE fails", async () => {
+    mockedApiRequest.mockImplementation(async (path, init) => {
+      if (path === "/expenses" && init === undefined) return jsonResponse(200, EXPENSES_BODY);
+      if (path === "/expenses/1" && init?.method === "DELETE") return jsonResponse(500, {});
+      throw new Error(`Unexpected apiRequest call: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(list).getByRole("button", { name: /eliminar almuerzo/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(mockedNotify).toHaveBeenCalledWith("error", expect.any(String)));
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText("Almuerzo")).toBeInTheDocument();
+  });
+
+  it("updates the corresponding row in the list without reloading after a successful edit", async () => {
+    mockedApiRequest.mockImplementation(async (path, init) => {
+      if (path === "/expenses" && init === undefined) return jsonResponse(200, EXPENSES_BODY);
+      if (path === "/categories") return jsonResponse(200, CATEGORIES_BODY);
+      if (path === "/expenses/1" && init?.method === "PATCH") {
+        return jsonResponse(200, {
+          amount: "3500.00",
+          place: "restaurante nuevo",
+          when: EXPENSES_BODY.expenses[0]!.when,
+          category: "Comida",
+          categoryOrigin: "manual",
+          description: "",
+          name: "Almuerzo",
+          type: "Personal",
+          currency: "ARS",
+        });
+      }
+      throw new Error(`Unexpected apiRequest call: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    const user = userEvent.setup();
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(list).getByRole("button", { name: /editar almuerzo/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Categoría" })).toHaveTextContent("Comida")
+    );
+
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(screen.queryByText("Editar gasto")).not.toBeInTheDocument());
+    expect(within(list).getByText(/3500\.00/)).toBeInTheDocument();
+    // No second `GET /expenses` -- the row was updated in place, not by reloading the list.
+    const getExpensesCalls = mockedApiRequest.mock.calls.filter(
+      ([path, init]) => path === "/expenses" && init === undefined
+    );
+    expect(getExpensesCalls).toHaveLength(1);
+  });
+
+  it("fires a success notification for a successful edit and for a successful delete", async () => {
+    mockedApiRequest.mockImplementation(async (path, init) => {
+      if (path === "/expenses" && init === undefined) return jsonResponse(200, EXPENSES_BODY);
+      if (path === "/categories") return jsonResponse(200, CATEGORIES_BODY);
+      if (path === "/expenses/1" && init?.method === "PATCH") {
+        return jsonResponse(200, {
+          ...EXPENSES_BODY.expenses[0],
+          amount: "3500.00",
+        });
+      }
+      throw new Error(`Unexpected apiRequest call: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    const user = userEvent.setup();
+    const { unmount } = render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(list).getByRole("button", { name: /editar almuerzo/i }));
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Categoría" })).toHaveTextContent("Comida")
+    );
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() => expect(mockedNotify).toHaveBeenCalledWith("success", expect.any(String)));
+
+    unmount();
+    mockedNotify.mockClear();
+    mockedApiRequest.mockReset();
+
+    mockedApiRequest.mockImplementation(async (path, init) => {
+      if (path === "/expenses" && init === undefined) return jsonResponse(200, EXPENSES_BODY);
+      if (path === "/expenses/1" && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected apiRequest call: ${String(init?.method ?? "GET")} ${path}`);
+    });
+    render(<ExpenseList />);
+
+    const secondList = await screen.findByRole("list", { name: /gastos/i });
+    await user.click(within(secondList).getByRole("button", { name: /eliminar almuerzo/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(mockedNotify).toHaveBeenCalledWith("success", expect.any(String)));
+  });
+
+  it("keeps the `<ul>` free of a scroll container of its own after Block 12 adds the edit/delete buttons (AGENTS.md: no list-owned scrolling container)", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(200, EXPENSES_BODY));
+    render(<ExpenseList />);
+
+    const list = await screen.findByRole("list", { name: /gastos/i });
+    expect(list.className).not.toMatch(/overflow-(y-)?(auto|scroll)/);
+
+    let node: HTMLElement | null = list;
+    while (node) {
+      expect(node.className).not.toMatch(/overflow-(y-)?(auto|scroll)/);
+      node = node.parentElement;
+    }
   });
 });

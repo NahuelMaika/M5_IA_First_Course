@@ -693,4 +693,324 @@ describe("expenses -- end-to-end (Block 11, spec-FEAT-002 + Block 5, spec-FEAT-0
       });
     });
   });
+
+  describe("PATCH/DELETE /expenses/:id, GET /categories -- end-to-end (Block 6, spec-FEAT-005a)", () => {
+    // Disjoint from TEST_USER_ID, same reasoning as the `GET /expenses` describe above: needed to
+    // exercise the 404 "not_found" ambiguity (existence vs. ownership) against a real, persisted
+    // row that belongs to someone else.
+    let OTHER_USER_ID: string;
+    let otherUserSessionToken: string;
+    const createdUserIds: string[] = [];
+
+    beforeAll(async () => {
+      OTHER_USER_ID = randomUUID();
+      await prisma.user.create({
+        data: {
+          id: OTHER_USER_ID,
+          email: `other-block6-${OTHER_USER_ID}@ggasia.local`,
+          passwordHash: "test-hash",
+        },
+      });
+      createdUserIds.push(OTHER_USER_ID);
+      otherUserSessionToken = (await createSession(prisma, OTHER_USER_ID)).token;
+    });
+
+    afterAll(async () => {
+      if (createdUserIds.length > 0) {
+        await prisma.session.deleteMany({ where: { userId: { in: createdUserIds } } });
+        await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+        createdUserIds.length = 0;
+      }
+    });
+
+    describe("AC-01 -- PATCH returns 200 with the updated body", () => {
+      it("updates place and returns the FR-13-shaped body reflecting the change", async () => {
+        const rawInput = `kiosco 1500 - block6 patch ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const newPlace = `nuevo lugar ${randomUUID()}`;
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { place: newPlace },
+        });
+
+        expect(patchResponse.statusCode).toBe(200);
+        const body = patchResponse.json();
+        expect(body).toMatchObject({
+          place: newPlace,
+          amount: "1500.00",
+          category: "Comida",
+          categoryOrigin: "automatica",
+        });
+
+        const persisted = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(persisted?.place).toBe(newPlace);
+      });
+    });
+
+    describe("AC-11 -- PATCH updates description, including clearing it to \"\"", () => {
+      it("returns 200 with the updated description", async () => {
+        const rawInput = `kiosco 1500 - block6 loop2 patch ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { description: "Nota del gasto" },
+        });
+
+        expect(patchResponse.statusCode).toBe(200);
+
+        const persisted = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(persisted?.description).toBe("Nota del gasto");
+
+        const clearResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { description: "" },
+        });
+
+        expect(clearResponse.statusCode).toBe(200);
+        const cleared = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(cleared?.description).toBe("");
+      });
+    });
+
+    describe("AC-12 -- PATCH rejects a description over 300 chars", () => {
+      it("returns 400 and does not modify the expense", async () => {
+        const rawInput = `kiosco 1500 - block6 loop2 reject ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { description: "a".repeat(301) },
+        });
+
+        expect(patchResponse.statusCode).toBe(400);
+
+        const untouched = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(untouched?.description).toBe(created.description);
+      });
+    });
+
+    describe("AC-02 -- PATCH returns 404 for another user's expense", () => {
+      it("404s without updating the row and reveals nothing about its existence", async () => {
+        const rawInput = `kiosco 1500 - block6 foreign patch ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: otherUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: OTHER_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { place: "should not apply" },
+        });
+
+        expect(patchResponse.statusCode).toBe(404);
+        expect(patchResponse.json()).toEqual({ error: "not_found" });
+
+        const untouched = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(untouched?.place).not.toBe("should not apply");
+      });
+    });
+
+    describe("AC-05 -- DELETE returns 204 and the expense disappears from GET /expenses", () => {
+      it("deletes the row and it no longer appears in the user's list", async () => {
+        const rawInput = `kiosco 1500 - block6 delete ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+
+        const deleteResponse = await app.inject({
+          method: "DELETE",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+
+        expect(deleteResponse.statusCode).toBe(204);
+        expect(deleteResponse.body).toBe("");
+
+        const listResponse = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+        const ids = listResponse.json().expenses.map((expense: { id: string }) => expense.id);
+        expect(ids).not.toContain(created.id);
+
+        // Nothing left to clean up in `afterEach`: the row is already gone.
+      });
+    });
+
+    describe("AC-07 -- DELETE returns 404 for another user's expense", () => {
+      it("404s and leaves the row intact", async () => {
+        const rawInput = `kiosco 1500 - block6 foreign delete ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: otherUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: OTHER_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+        createdExpenseIds.push(created.id);
+
+        const deleteResponse = await app.inject({
+          method: "DELETE",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+
+        expect(deleteResponse.statusCode).toBe(404);
+        expect(deleteResponse.json()).toEqual({ error: "not_found" });
+
+        const stillThere = await prisma.expense.findUnique({ where: { id: created.id } });
+        expect(stillThere).not.toBeNull();
+      });
+    });
+
+    describe("AC-15 -- GET /categories returns predefined + own categories", () => {
+      it("200s with the 11 predefined categories plus the user's own", async () => {
+        const ownCategoryName = `mi categoria block6 ${randomUUID()}`;
+        const ownCategory = await prisma.category.create({
+          data: {
+            name: ownCategoryName,
+            nameNormalized: ownCategoryName.toLowerCase(),
+            ownerId: TEST_USER_ID,
+          },
+        });
+        createdCategoryIds.push(ownCategory.id);
+
+        const response = await app.inject({
+          method: "GET",
+          url: "/categories",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+
+        expect(response.statusCode).toBe(200);
+        const { categories } = response.json();
+        const predefinedCount = categories.filter(
+          (category: { id: string; name: string; active: boolean }) =>
+            category.name !== ownCategoryName,
+        ).length;
+        expect(predefinedCount).toBe(11);
+        expect(categories).toContainEqual({ id: ownCategory.id, name: ownCategoryName, active: true });
+      });
+    });
+
+    describe("full lifecycle -- create -> edit -> verify -> delete -> verify gone", () => {
+      it("walks the full ABM flow end to end", async () => {
+        const rawInput = `kiosco 1500 - block6 lifecycle ${randomUUID()}`;
+
+        const createResponse = await app.inject({
+          method: "POST",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { input: rawInput },
+        });
+        expect(createResponse.statusCode).toBe(201);
+
+        const created = await prisma.expense.findFirst({ where: { userId: TEST_USER_ID, rawInput } });
+        if (!created) throw new Error("expected the expense to have been persisted");
+
+        const newPlace = `lifecycle place ${randomUUID()}`;
+        const patchResponse = await app.inject({
+          method: "PATCH",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+          payload: { place: newPlace },
+        });
+        expect(patchResponse.statusCode).toBe(200);
+
+        const listAfterEdit = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+        const editedExpense = listAfterEdit
+          .json()
+          .expenses.find((expense: { id: string }) => expense.id === created.id);
+        expect(editedExpense).toMatchObject({ place: newPlace });
+
+        const deleteResponse = await app.inject({
+          method: "DELETE",
+          url: `/expenses/${created.id}`,
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+        expect(deleteResponse.statusCode).toBe(204);
+
+        const listAfterDelete = await app.inject({
+          method: "GET",
+          url: "/expenses",
+          cookies: { [SESSION_COOKIE_NAME]: testUserSessionToken },
+        });
+        const idsAfterDelete = listAfterDelete
+          .json()
+          .expenses.map((expense: { id: string }) => expense.id);
+        expect(idsAfterDelete).not.toContain(created.id);
+
+        // Nothing left to clean up in `afterEach`: the row is already gone.
+      });
+    });
+  });
 });

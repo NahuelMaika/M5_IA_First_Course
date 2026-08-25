@@ -131,4 +131,79 @@ describe("categoryRepository (Block 8, spec-FEAT-002)", () => {
     const notFound = await findByNameForUser(prisma, TEST_USER_ID, `Nonexistent ${randomUUID()}`);
     expect(notFound).toBeNull();
   });
+
+  it("findVisibleForUserWithId returns predefined and own categories, each with an id", async () => {
+    const { findVisibleForUserWithId, create } = await import(
+      "../../src/repositories/category-repository.ts"
+    );
+    const { normalize } = await import("@ggasia/categorization");
+
+    const name = `Test Category ${randomUUID()}`;
+    const nameNormalized = normalize(name);
+    const own = await create(prisma, { name, nameNormalized, ownerId: TEST_USER_ID });
+    createdCategoryIds.push(own.id);
+
+    const visible = await findVisibleForUserWithId(prisma, TEST_USER_ID);
+
+    expect(visible.length).toBeGreaterThanOrEqual(12);
+    for (const category of visible) {
+      expect(category).toEqual({
+        id: expect.any(String),
+        name: expect.any(String),
+        active: expect.any(Boolean),
+      });
+    }
+    const found = visible.find((category) => category.name === name);
+    expect(found?.id).toBe(own.id);
+  });
+
+  it("findVisibleForUserWithId does not return another user's own categories", async () => {
+    const { findVisibleForUserWithId, create } = await import(
+      "../../src/repositories/category-repository.ts"
+    );
+    const { normalize } = await import("@ggasia/categorization");
+
+    // A real second user (the `owner` FK requires an existing row), disjoint from the seeded
+    // TEST_USER_ID, deleted at the end of this test -- never touching the seeded fixture user.
+    const otherUserId = randomUUID();
+    await prisma.user.create({
+      data: {
+        id: otherUserId,
+        email: `other-${otherUserId}@ggasia.local`,
+        passwordHash: "test-hash",
+      },
+    });
+
+    let ownedByOtherId: string | undefined;
+
+    try {
+      const name = `Other User Category ${randomUUID()}`;
+      const nameNormalized = normalize(name);
+      const ownedByOther = await create(prisma, { name, nameNormalized, ownerId: otherUserId });
+      ownedByOtherId = ownedByOther.id;
+
+      const visible = await findVisibleForUserWithId(prisma, TEST_USER_ID);
+
+      expect(visible.some((category) => category.id === ownedByOther.id)).toBe(false);
+    } finally {
+      // The child category must be gone before its owning user is deleted -- deleting the user
+      // first would rely on the `owner_id` FK's `ON DELETE SET NULL` to silently turn this row into
+      // a phantom predefined category for the window until `afterEach` runs.
+      if (ownedByOtherId !== undefined) {
+        await prisma.category.delete({ where: { id: ownedByOtherId } });
+      }
+      await prisma.user.delete({ where: { id: otherUserId } });
+    }
+  });
+
+  it("findVisibleForUser still returns exactly {name, active} with no id (regression for resolveCategoryName)", async () => {
+    const { findVisibleForUser } = await import("../../src/repositories/category-repository.ts");
+
+    const visible = await findVisibleForUser(prisma, TEST_USER_ID);
+
+    expect(visible.length).toBeGreaterThan(0);
+    for (const category of visible) {
+      expect(Object.keys(category).sort()).toEqual(["active", "name"]);
+    }
+  });
 });

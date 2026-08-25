@@ -13,7 +13,10 @@ import "./globals.css";
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="es" className="font-sans">
-      <body>
+      {/* isolate: gives Base UI's Dialog and Select portals (both appended to this <body>) a
+          shared stacking context, so their z-index compares reliably against each other --
+          see docs/daw/specs/rca-FIX-002.md. */}
+      <body className="isolate">
         {children}
         <Toaster />
       </body>

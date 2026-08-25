@@ -20,7 +20,7 @@ import { Prisma } from "../generated/prisma/client.ts";
 import type { Expense, PrismaClient } from "../generated/prisma/client.ts";
 import * as categoryRepository from "../repositories/category-repository.ts";
 import * as expenseRepository from "../repositories/expense-repository.ts";
-import type { ExpenseWithCategory } from "../repositories/expense-repository.ts";
+import type { ExpenseWithCategory, UpdateExpenseInput } from "../repositories/expense-repository.ts";
 
 type RejectionReason = RejectedExpense["reason"];
 
@@ -208,6 +208,103 @@ export async function listExpenses(
   } catch (error) {
     // Same log hygiene as `createExpense`'s catch block: the real error, never raw expense data.
     deps.logger?.error({ err: error }, "expense listing failed with an internal error");
+    return { outcome: "internal_error" };
+  }
+}
+
+/**
+ * The fields a `PATCH /expenses/:id` request may carry (spec-FEAT-005a Block 1's
+ * `updateExpenseBodySchema`) -- same shape as the repository's `UpdateExpenseInput` since this
+ * service passes the patch straight through to `expenseRepository.update` (spec Block 4, Logic
+ * step 4), it never adds or transforms fields.
+ */
+export type UpdateExpensePatch = UpdateExpenseInput;
+
+/**
+ * `updateExpense`'s result union stays separate from `createExpense`'s/`listExpenses`'s for the
+ * same reason documented above `ExpenseServiceResult`: callers should only ever narrow branches
+ * that can actually occur for the operation they invoked.
+ */
+export type ExpenseUpdateResult =
+  | { outcome: "updated"; expense: ExpenseWithCategory }
+  | { outcome: "not_found" }
+  | { outcome: "invalid_category" }
+  | { outcome: "internal_error" };
+
+export type ExpenseDeleteResult =
+  | { outcome: "deleted" }
+  | { outcome: "not_found" }
+  | { outcome: "internal_error" };
+
+/**
+ * Updates `expenseId` for `userId`. See spec-FEAT-005a Block 4's Logic/Error handling for the
+ * exact contract this implements:
+ *
+ * - `"not_found"` covers both "the expense doesn't exist" and "it belongs to another user" --
+ *   deliberately not distinguished, so this endpoint never confirms the existence of another
+ *   user's expense (threat-FEAT-005a.md's F-TM mitigation).
+ * - When `patch.categoryId` is present, it MUST appear in `categoryRepository
+ *   .findVisibleForUserWithId`'s result for `userId` (mitigation R2) or nothing is persisted.
+ * - When `patch.categoryId` is absent, the expense's current category is left untouched --
+ *   `resolveCategoryName`/`createCategorizer` are never invoked in this flow (AGENTS.md: "Do not
+ *   re-categorize an expense when its Place is edited").
+ */
+export async function updateExpense(
+  deps: ExpenseServiceDeps,
+  userId: string,
+  expenseId: string,
+  patch: UpdateExpensePatch,
+): Promise<ExpenseUpdateResult> {
+  try {
+    const existing = await expenseRepository.findByIdForUser(deps.prisma, {
+      id: expenseId,
+      userId,
+    });
+    if (existing === null) {
+      return { outcome: "not_found" };
+    }
+
+    if (patch.categoryId !== undefined) {
+      const visible = await categoryRepository.findVisibleForUserWithId(deps.prisma, userId);
+      const isVisible = visible.some((category) => category.id === patch.categoryId);
+      if (!isVisible) {
+        return { outcome: "invalid_category" };
+      }
+    }
+
+    const updated = await expenseRepository.update(deps.prisma, expenseId, { ...patch });
+    return { outcome: "updated", expense: updated };
+  } catch (error) {
+    // Same log hygiene as `createExpense`'s catch block: the real Prisma error, never leaked past
+    // this module (mitigation R4 of threat-FEAT-005a.md).
+    deps.logger?.error({ err: error }, "expense update failed with an internal error");
+    return { outcome: "internal_error" };
+  }
+}
+
+/**
+ * Deletes `expenseId` for `userId` (FR-05, RF-44 of `PRD.md` -- physical delete). Same
+ * `"not_found"` ambiguity as `updateExpense` (existence vs. ownership never distinguished) and the
+ * same generic `try/catch` -> `internal_error` contract (mitigation R4).
+ */
+export async function deleteExpense(
+  deps: ExpenseServiceDeps,
+  userId: string,
+  expenseId: string,
+): Promise<ExpenseDeleteResult> {
+  try {
+    const existing = await expenseRepository.findByIdForUser(deps.prisma, {
+      id: expenseId,
+      userId,
+    });
+    if (existing === null) {
+      return { outcome: "not_found" };
+    }
+
+    await expenseRepository.remove(deps.prisma, expenseId);
+    return { outcome: "deleted" };
+  } catch (error) {
+    deps.logger?.error({ err: error }, "expense deletion failed with an internal error");
     return { outcome: "internal_error" };
   }
 }
