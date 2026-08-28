@@ -32,6 +32,13 @@ const envSchema = z.object({
     .refine((url) => new URL(url).pathname === "/", {
       message: "WEB_ORIGIN must not include a path -- see this field's comment in env.ts",
     }),
+  TRANSCRIPTION_API_KEY: z.string().min(1),
+  TRANSCRIPTION_MODEL: z.string().min(1),
+  // Unlike WEB_ORIGIN (which allows http:// for local development), this URL always points to a
+  // real third-party service, never localhost -- so https is required with no exception
+  // (threat-FEAT-006.md, risk R1: the user's audio, potentially voice PII, and the API key must
+  // never be able to travel in plaintext due to a misconfiguration).
+  TRANSCRIPTION_BASE_URL: z.url({ protocol: /^https$/ }),
 });
 
 export type Env = z.infer<typeof envSchema>;
