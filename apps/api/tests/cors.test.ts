@@ -22,8 +22,18 @@
  * pattern as `tests/plugins/auth.test.ts`'s own fake client.
  */
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SESSION_COOKIE_NAME } from "../src/app.ts";
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly -- same ordering issue as `tests/app.test.ts`, fixed
+// the same way: load the root `.env` first, then import `app.ts` dynamically.
+const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
+config({ path: path.resolve(apiRoot, "../../.env") });
+
+const { SESSION_COOKIE_NAME } = await import("../src/app.ts");
 
 const TEST_USER_ID = "22222222-2222-2222-2222-222222222222";
 const VALID_SESSION_TOKEN = "valid-raw-session-token-for-cors-tests";

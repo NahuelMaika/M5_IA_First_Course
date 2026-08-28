@@ -15,9 +15,23 @@
  * regression tests proving `x-user-id` alone, without a cookie, no longer authenticates anything.
  */
 import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SESSION_COOKIE_NAME } from "../../src/app.ts";
 import { Prisma } from "../../src/generated/prisma/client.ts";
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly at module top level -- so a plain `import {
+// SESSION_COOKIE_NAME } from "../../src/app.ts"` at this file's top would now fail with
+// `process.exit(1)` (missing TRANSCRIPTION_*/DATABASE_URL/WEB_ORIGIN) before any test even runs,
+// since ES module imports resolve before this file's own top-level statements. Loading the root
+// `.env` first, then importing `app.ts` dynamically (top-level await), same pattern as
+// `tests/services/transcription-client.test.ts`, fixes the ordering.
+const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
+config({ path: path.resolve(apiRoot, "../../.env") });
+
+const { SESSION_COOKIE_NAME } = await import("../../src/app.ts");
 
 // Some of these tests are the first in the process to transform/load the compiled
 // `@ggasia/domain` module through `vi.mock`'s dynamic `importOriginal`, which can take longer
@@ -72,6 +86,13 @@ vi.mock("../../src/services/expense-service.ts", async (importOriginal) => {
     deleteExpense: vi.fn(),
   };
 });
+
+// `POST /expenses/audio` tests (Block 5, spec-FEAT-006) fully mock the transcription client --
+// it is the project's first external HTTP client (Block 3 has its own dedicated test suite) and
+// must never call the real Groq API from this route-level suite.
+vi.mock("../../src/services/transcription-client.ts", () => ({
+  transcribeAudio: vi.fn(),
+}));
 
 interface FakeCategory {
   id: string;
@@ -161,6 +182,277 @@ function seedFor(overrides: Partial<FakeCategory>[] = []): FakeCategory[] {
   };
   return [base, ...overrides.map((o) => ({ ...base, id: randomUUID(), ...o }))];
 }
+
+/**
+ * Builds a raw `multipart/form-data` body for `app.inject()` by hand -- there is no `form-data`
+ * helper package in this monorepo, and `fastify.inject` accepts a plain `Buffer` payload as long
+ * as the matching `content-type` (with `boundary`) is set explicitly.
+ */
+function multipartAudioBody(fileContent: Buffer, filename = "audio.webm", mimetype = "audio/webm") {
+  const boundary = "----ggasia-test-boundary";
+  const header = Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: ${mimetype}\r\n\r\n`,
+  );
+  const footer = Buffer.from(`\r\n--${boundary}--\r\n`);
+  return {
+    payload: Buffer.concat([header, fileContent, footer]),
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
+/** An empty `multipart/form-data` body -- no file part at all (Block 5's 400 case). */
+function emptyMultipartBody() {
+  const boundary = "----ggasia-test-boundary-empty";
+  return {
+    payload: Buffer.from(`--${boundary}--\r\n`),
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}` },
+  };
+}
+
+describe("POST /expenses/audio (Block 5, spec-FEAT-006)", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns 201 with the FR-13 shape and channel: audio for a valid recording (AC-01)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    vi.mocked(transcribeAudio).mockResolvedValue({ outcome: "transcribed", text: "café 1500" });
+
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from("fake-audio-bytes"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(201);
+    const body = response.json();
+    expect(body).toMatchObject({
+      amount: "1500.00",
+      place: "café",
+      category: "Comida",
+      categoryOrigin: "automatica",
+      description: "",
+      name: "café",
+      type: "Personal",
+      currency: "ARS",
+    });
+    const createdExpense = prisma.__state.expenses[0] as Record<string, unknown>;
+    expect(createdExpense["channel"]).toBe("audio");
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 400 when the multipart request carries no file", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = emptyMultipartBody();
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: "validation_error" });
+    expect(transcribeAudio).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 401 when there is no session cookie (AC-07)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from("fake-audio-bytes"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: "unauthorized" });
+    expect(transcribeAudio).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 413 for a file exceeding 25 MB, without ever invoking transcribeAudio (AC-04)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const oversizedFile = Buffer.alloc(25 * 1024 * 1024 + 1024, "a");
+    const { payload, headers } = multipartAudioBody(oversizedFile);
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(413);
+    expect(transcribeAudio).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 422 transcripcion_vacia when transcribeAudio returns an empty/blank text, without invoking createExpense (AC-03)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    vi.mocked(transcribeAudio).mockResolvedValue({ outcome: "transcribed", text: "   " });
+
+    const { parseExpense } = await import("@ggasia/domain");
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from("fake-audio-bytes"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.json()).toEqual({ reason: "transcripcion_vacia" });
+    // `createExpense` is never invoked -- proven indirectly via `parseExpense`, its first internal
+    // call, which the domain-rejection test below shows this suite CAN observe directly.
+    expect(parseExpense).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 422 with the same domain reason POST /expenses would return for the same text", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    vi.mocked(transcribeAudio).mockResolvedValue({ outcome: "transcribed", text: "sin monto" });
+
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from("fake-audio-bytes"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(422);
+    // Same reason `POST /expenses` returns for the literal input "sin monto" (see that describe
+    // block's own AC-02 test above) -- proves both channels share the same `parseExpense` rules.
+    expect(response.json()).toEqual({ reason: "amount_indeterminate" });
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 502 when transcribeAudio fails, and creates no expense (AC-05)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    vi.mocked(transcribeAudio).mockResolvedValue({ outcome: "error" });
+
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from("fake-audio-bytes"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toEqual({ error: "transcription_failed" });
+    expect(prisma.expense.create).not.toHaveBeenCalled();
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("never exposes the raw audio bytes or the transcribed text in an error response (AC-02)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    const SECRET_MARKER = "SECRET-AUDIO-MARKER-should-never-leak";
+    vi.mocked(transcribeAudio).mockResolvedValue({ outcome: "transcribed", text: "sin monto" });
+
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from(SECRET_MARKER));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.body).not.toContain(SECRET_MARKER);
+    expect(response.body).not.toContain("sin monto");
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+
+  it("returns 500 with a generic body when createExpense reports internal_error, without leaking rawInput (spec loop 1)", async () => {
+    const { transcribeAudio } = await import("../../src/services/transcription-client.ts");
+    vi.mocked(transcribeAudio).mockResolvedValue({ outcome: "transcribed", text: "café 1500" });
+
+    const { buildApp } = await import("../../src/app.ts");
+    const prisma = fakePrismaClient(seedFor());
+    prisma.__setExpenseCreateImpl(() => {
+      throw new Error("Prisma exploded: connection refused at db.internal:5432");
+    });
+    // biome-ignore-next: fake client only exposes the methods the route/service exercise.
+    const app = buildApp({ prismaClient: prisma as never });
+
+    const { payload, headers } = multipartAudioBody(Buffer.from("fake-audio-bytes"));
+    const response = await app.inject({
+      method: "POST",
+      url: "/expenses/audio",
+      cookies: { [SESSION_COOKIE_NAME]: VALID_SESSION_TOKEN },
+      headers,
+      payload,
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ error: "internal_error" });
+    expect(response.body).not.toContain("Prisma exploded");
+    expect(response.body).not.toContain("db.internal");
+    expect(response.body).not.toContain("café 1500");
+
+    await app.close();
+  }, TEST_TIMEOUT_MS);
+});
 
 describe("POST /expenses (Block 10, spec-FEAT-002)", () => {
   afterEach(() => {

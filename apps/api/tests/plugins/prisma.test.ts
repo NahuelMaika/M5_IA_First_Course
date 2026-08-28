@@ -19,10 +19,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildApp } from "../../src/app.ts";
 
 const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
 config({ path: path.resolve(apiRoot, "../../.env") });
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly -- a plain top-of-file `import { buildApp }` would
+// resolve BEFORE the `config()` call above runs (ES module imports resolve ahead of a module's own
+// top-level statements, regardless of source order), so `buildApp` is now imported dynamically,
+// after `.env` is loaded.
+const { buildApp } = await import("../../src/app.ts");
 
 function fakePrismaClient() {
   return {

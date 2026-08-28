@@ -1,3 +1,6 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import {
   afterEach,
   beforeEach,
@@ -6,7 +9,17 @@ import {
   it,
   vi,
 } from "vitest";
-import { buildApp, sessionCookieOptions } from "../src/app.ts";
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly at module top level -- so a plain `import { buildApp }
+// from "../src/app.ts"` here would now fail with `process.exit(1)` (missing env vars) before any
+// test runs, since ES module imports resolve before this file's own top-level statements. Loading
+// the root `.env` first, then importing `app.ts` dynamically (top-level await), same pattern as
+// `tests/services/transcription-client.test.ts`, fixes the ordering.
+const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
+config({ path: path.resolve(apiRoot, "../../.env") });
+
+const { buildApp, sessionCookieOptions } = await import("../src/app.ts");
 
 // Fake PrismaClient injected via `options.prismaClient` so `buildApp()` does not trigger the
 // plugin's real-connection branch, which dynamically imports `env.ts` and would abort the
