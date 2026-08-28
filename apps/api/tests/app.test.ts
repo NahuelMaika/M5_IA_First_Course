@@ -31,6 +31,19 @@ describe("buildApp", () => {
     await app.close();
   });
 
+  it("registers the multipart plugin (spec-FEAT-006 Block 4)", async () => {
+    // biome-ignore-next: fake client only needs the methods the plugin uses.
+    const app = buildApp({ prismaClient: fakePrismaClient() as never });
+
+    // No route or file parsing exercised here (that's Block 5) -- this smoke test only proves
+    // `@fastify/multipart` is registered on the instance, via the content-type parser it adds
+    // for `multipart/form-data`. A plain Fastify instance has no parser for this content type.
+    await app.ready();
+    expect(app.hasContentTypeParser("multipart/form-data")).toBe(true);
+
+    await app.close();
+  });
+
   it("registers the cookie plugin, so a route can read/write cookies", async () => {
     // biome-ignore-next: fake client only needs the methods the plugin uses.
     const app = buildApp({ prismaClient: fakePrismaClient() as never });
