@@ -70,6 +70,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dialogs mount once at list level, and a successful edit or delete updates the list in place
   without a reload, with a brief success/error notification through the centralized `notify()`
   module.
+- [FEAT-006] Alta de gasto por audio. `apps/api`: `POST /expenses/audio` accepts a
+  `multipart/form-data` recording (`@fastify/multipart`, 25MB limit both at the plugin and
+  per-route `bodyLimit`), transcribes it via Groq's audio-transcription endpoint
+  (`transcription-client.ts`, a 6s timeout, HTTPS enforced on `TRANSCRIPTION_BASE_URL`), and runs
+  the transcribed text through the same `createExpense` pipeline as the text channel, now
+  parameterized by a new `channel` ("texto" | "audio") persisted on `Expense`. The raw audio bytes
+  are never written to disk or logged — processed in memory and discarded once transcribed (see
+  `docs/daw/security/threat-FEAT-006.md`). `apps/web`: a microphone button next to the expense
+  Textarea (`useAudioRecorder`, a `MediaRecorder`/`getUserMedia` wrapper), independent of the
+  text flow's `isSubmitting` state, that records, stops, and submits the audio as `FormData` to
+  the new endpoint, reusing the same result/error UI as the text channel.
 
 ### Changed
 
