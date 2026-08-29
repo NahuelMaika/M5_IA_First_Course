@@ -232,26 +232,29 @@ describe("Page — full screen (Block 9)", () => {
 
     // The list already has data (no empty-state button) and loaded successfully (no retry
     // button), so the screen's interactive controls are Block 6's `LogoutButton`, the form's
-    // textarea and its submit button, plus each row's edit/delete buttons added in Block 12
-    // (spec-FEAT-005a.md) -- confirmed by counting every native focusable element on the page.
+    // textarea, its submit button and mic button (Block 7, spec-FEAT-006), plus each row's
+    // edit/delete buttons added in Block 12 (spec-FEAT-005a.md) -- confirmed by counting every
+    // native focusable element on the page.
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(7);
+    expect(focusableElements).toHaveLength(8);
 
     // Neither `LogoutButton` nor the form's controls set an explicit `tabIndex`, so tab order
     // follows DOM order. In `page.tsx`, `<LogoutButton/>` sits in the header row above
-    // `<ExpenseForm/>`, so it is reached first, followed by the textarea, the submit button, and
-    // then each row's edit/delete buttons in list order (Almuerzo, then Ibuprofeno).
+    // `<ExpenseForm/>`, so it is reached first, followed by the textarea, the submit button, the
+    // mic button (Block 7 -- it sits right after "Guardar" in the DOM), and then each row's
+    // edit/delete buttons in list order (Almuerzo, then Ibuprofeno).
     expect(focusableElements[0]).toHaveAccessibleName(/cerrar sesión/i);
     expect(focusableElements[1].tagName).toBe("TEXTAREA");
     expect(focusableElements[2]).toHaveAttribute("type", "submit");
-    expect(focusableElements[3]).toHaveAccessibleName(/editar almuerzo/i);
-    expect(focusableElements[4]).toHaveAccessibleName(/eliminar almuerzo/i);
-    expect(focusableElements[5]).toHaveAccessibleName(/editar ibuprofeno/i);
-    expect(focusableElements[6]).toHaveAccessibleName(/eliminar ibuprofeno/i);
+    expect(focusableElements[3]).toHaveAccessibleName(/grabar audio/i);
+    expect(focusableElements[4]).toHaveAccessibleName(/editar almuerzo/i);
+    expect(focusableElements[5]).toHaveAccessibleName(/eliminar almuerzo/i);
+    expect(focusableElements[6]).toHaveAccessibleName(/editar ibuprofeno/i);
+    expect(focusableElements[7]).toHaveAccessibleName(/eliminar ibuprofeno/i);
 
     for (const element of focusableElements) {
       await user.tab();
@@ -302,14 +305,14 @@ describe("Page — full screen (Block 9)", () => {
     await screen.findByRole("list", { name: /gastos/i });
 
     // Same universe as AC-14: the list already has data, so the screen's interactive controls
-    // are `LogoutButton`, the form's textarea and its submit button, plus each row's edit/delete
-    // buttons (Block 12, spec-FEAT-005a.md).
+    // are `LogoutButton`, the form's textarea, its submit button and mic button (Block 7,
+    // spec-FEAT-006), plus each row's edit/delete buttons (Block 12, spec-FEAT-005a.md).
     const focusableElements = Array.from(
       document.querySelectorAll<HTMLElement>(
         'button, textarea, input, a[href], [tabindex]:not([tabindex="-1"])'
       )
     );
-    expect(focusableElements).toHaveLength(7);
+    expect(focusableElements).toHaveLength(8);
 
     // jsdom does not run a real layout engine, so pixel geometry (getBoundingClientRect) is
     // never real here -- verify the 24px CSS floor via the Tailwind spacing-scale classes that
