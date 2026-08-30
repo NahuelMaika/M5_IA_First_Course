@@ -106,3 +106,34 @@
   de grabación)
 - Trust boundaries declaradas: 4 (1 nueva: apps/api → Groq)
 - Riesgos: C:0 H:0 (R1 ya mitigado) M:1 (R2, aceptado) L:2 (R3/R4, aceptados)
+
+## Loop 2 (spec loops=2) — corrección de dos defectos de implementación
+
+**Fecha**: 2026-08-30. **Componente modificado**: `expense-form.tsx` (apps/web), función
+`submitAudioExpense` y su JSX — mismo componente ya analizado arriba en "`use-audio-recorder.ts` /
+control de grabación (browser)", sin componentes nuevos.
+
+**Cambio 1 — filename real en el `FormData`**: hasta ahora `formData.append("file", blob)` viajaba
+sin nombre (el navegador ponía `"blob"`, sin extensión); este loop agrega un filename derivado de
+`blob.type` (ej. `recording.webm`). El filename **ya era controlado por el cliente antes de este
+fix** — el trust boundary browser→apps/api no cambia, y `transcription-client.ts` (apps/api) ya
+trataba ese valor como metadata opaca reenviada a Groq, nunca para construir un path de filesystem
+(F-SAST-05, `sast-FEAT-006.md`, sin cambios). Que el valor pase de ser siempre `"blob"` a ser
+`recording.<subtype>` no habilita ninguna clase de ataque nueva: sigue siendo una string acotada
+(la subtype del `mimeType` que reporta `MediaRecorder`, ej. `webm`/`ogg`/`mp4`), no input de texto
+libre del usuario.
+
+**Cambio 2 — wrapper `<div>` de layout**: sin superficie de ataque — cambio puramente visual, sin
+tocar ningún dato, request ni trust boundary.
+
+| Categoría STRIDE | Análisis |
+|---|---|
+| Spoofing | Sin cambios — mismo `authPreHandler`. |
+| Tampering | Sin cambios — el filename siempre fue tamperable por el cliente (ya lo era antes de este fix); no se usa para autorización ni para construir paths. |
+| Repudiation | Sin cambios. |
+| Information Disclosure | Sin cambios — el filename derivado no expone más información que antes (es la subtype del mimeType, no contenido del audio). |
+| Denial of Service | Sin cambios. |
+| Elevation of Privilege | N/A. |
+
+**Resultado**: ninguna superficie de ataque nueva, ningún trust boundary nuevo, ningún dato sensible
+nuevo. Riesgos de este loop: C:0 H:0 M:0 L:0.

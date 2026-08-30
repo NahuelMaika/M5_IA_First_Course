@@ -6,7 +6,7 @@
 | PRD | docs/daw/prd/prd-FEAT-006.md |
 | Tier | FEATURE |
 | Date | 2026-08-28 |
-| Spec loops | 1 |
+| Spec loops | 2 |
 
 ## Summary
 
@@ -27,14 +27,14 @@ proveedor y la estrategia de límite de tamaño.
 | FR-03 | Block 3, Block 5 |
 | FR-04 | Block 5 |
 | FR-05 | Block 4, Block 5 |
-| FR-06 | Block 6, Block 7 |
+| FR-06 | Block 6, Block 7, Block 8 |
 | FR-07 | Block 7 |
 | FR-08 | Block 7 |
 | FR-09 | Block 7 |
 | NFR-01 | Strategy: timeout de 6s en el cliente de transcripción (Block 3), deja ~2s de margen sobre el p95 de 8s para el resto del pipeline; medido manualmente en VERIFY (no hay entorno de carga automatizado en el proyecto) |
 | NFR-02 | Strategy: ningún archivo ni ruta del canal de texto (`POST /expenses`, `expense-form.tsx`'s flujo de texto) se modifica para depender de `TRANSCRIPTION_*` — si Groq está caído, la única ruta afectada es `/expenses/audio` |
 | NFR-03 | Block 5 |
-| AC-01 | Block 5 |
+| AC-01 | Block 5, Block 8 |
 | AC-02 | Block 3, Block 5 |
 | AC-03 | Block 5 |
 | AC-04 | Block 4, Block 5 |
@@ -50,7 +50,9 @@ proveedor y la estrategia de límite de tamaño.
 Blocks 1–4 son independientes entre sí pero todos alimentan Block 5 (no puede completarse sin
 ellos). Block 6 es independiente de los anteriores. Block 7 depende de Block 6 (usa su hook) y,
 funcionalmente, del contrato que define Block 5 (aunque sus tests usan `fetch` mockeado, no
-requieren el backend corriendo). Orden de ejecución: 1 → 2 → 3 → 4 → 5 → 6 → 7.
+requieren el backend corriendo). Block 8 (spec loop 2) depende de que Block 7 ya esté implementado
+(corrige código que Block 7 introdujo) pero no tiene dependencia con ningún otro block. Orden de
+ejecución: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
 
 ## Block 1 — Configuración: variables de entorno de transcripción
 
@@ -377,12 +379,66 @@ operación en curso.
 `vitest run apps/web/src/components/expense-form.test.tsx` pasa; `pnpm --filter @ggasia/web
 typecheck` pasa.
 
+## Block 8 — Fix: filename ausente en FormData de audio + layout del botón de mic (spec loop 2)
+
+**Files**
+- `apps/web/src/components/expense-form.tsx` (modified)
+
+**Logic**
+1. Agrega una función pura `audioFilename(mimeType: string): string` junto a
+   `validateExpenseInput`/`formatExpenseDate`/`resolveRejectionMessage` (mismo patrón de funciones
+   puras a nivel de módulo ya establecido en este archivo). Deriva la extensión tomando la subtype
+   de `mimeType` antes de cualquier `;codecs=...` (`mimeType.split(";")[0]?.split("/")[1]`), con
+   fallback `"webm"` si el resultado es vacío/`undefined`. Devuelve `recording.<extensión>`.
+2. En `submitAudioExpense`, cambia `formData.append("file", blob)` por
+   `formData.append("file", blob, audioFilename(blob.type))`.
+3. En el JSX del `<form>`, envuelve el `<Button type="submit">` (Guardar) y el
+   `<Button type="button">` (mic) en `<div className="mt-2 flex items-center gap-2">`, sin cambiar
+   el orden ni ningún otro atributo de los botones (mismo patrón `flex ... gap-2` que
+   `expense-edit-dialog.tsx:361`, con `items-center` en vez de `justify-end` por no ser un diálogo).
+
+**Root cause**: `formData.append("file", blob)` sin filename hace que el navegador use el nombre
+default `"blob"` sin extensión; `@fastify/multipart` (apps/api) expone ese nombre tal cual, y
+`transcription-client.ts` (ya correcto desde Block 3) lo reenvía a Groq, que rechaza por extensión
+no reconocida (400) — `transcribeAudio` mapea eso a `{ outcome: "error" }` y la ruta responde 502
+(`transcription_failed`), rompiendo el happy path que AC-01 exige. El wrapper `<div>` corrige que
+Guardar y el botón de mic no tenían ningún contenedor de layout, quedando sin separación visual
+predecible (afecta la usabilidad del control que FR-06 exige).
+
+**Threat model**: sin componentes ni trust boundaries nuevos — el filename ya era controlado por el
+cliente antes de este fix y sigue siendo metadata opaca reenviada a Groq, nunca usada para
+construir un path de filesystem (F-SAST-05, `sast-FEAT-006.md`, sin cambios). Ver
+`docs/daw/security/threat-FEAT-006.md`, addendum "Loop 2" — PASSED, C:0 H:0 M:0 L:0.
+
+**Input validation**
+Sin cambios — el filename derivado no es input del usuario: es metadata calculada a partir de
+`blob.type`, que reporta el propio `MediaRecorder` del navegador (no editable vía la UI).
+
+**Error handling**
+`audioFilename` no lanza — el fallback `"webm"` cubre el caso de un `mimeType` vacío o inesperado.
+
+**Required tests**
+- [ ] `apps/web/src/components/expense-form.test.tsx` — `audioFilename` deriva la extensión real de
+  un mimeType típico (`"audio/webm;codecs=opus"` → `"recording.webm"`)
+- [ ] ídem — `audioFilename` usa el fallback `"webm"` si `blob.type` es una cadena vacía
+- [ ] ídem — `submitAudioExpense`: el `FormData` enviado a `apiRequest` incluye el filename
+  derivado como tercer argumento de `"file"` (no el default `"blob"`)
+- [ ] ídem — el wrapper `<div>` no altera el orden de tabulación: el botón "Guardar" sigue siendo
+  focosable antes que el botón de mic
+
+**Completion criterion**
+`vitest run apps/web/src/components/expense-form.test.tsx` pasa; `pnpm --filter @ggasia/web
+typecheck` pasa; ningún test existente de `expense-list.test.tsx` se rompe (conteo/orden de
+focosables sin cambios, un `<div>` no es focosable).
+
 ## Final verification
 
-Con los 7 bloques completos: `pnpm test` (typecheck + vitest en todo el monorepo) pasa en verde;
-`POST /expenses/audio` con un audio real (probado manualmente contra Groq, no solo mockeado) crea
-un gasto con `channel: "audio"` visible en el listado existente; el canal de texto (`POST
-/expenses`, el flujo de `Textarea`) no cambia su comportamiento en ningún test preexistente; ningún
-archivo de audio ni su transcripción quedan en disco ni en la base de datos más allá del campo
-`rawInput` (que ya almacena texto libre para el canal de texto, y ahora también el texto
-transcripto para el canal de audio — nunca los bytes del audio en sí).
+Con los 8 bloques completos: `pnpm test` (typecheck + vitest en todo el monorepo) pasa en verde;
+`POST /expenses/audio` con un audio real grabado desde el navegador (probado manualmente contra
+Groq, no solo mockeado) crea un gasto con `channel: "audio"` visible en el listado existente, sin el
+502 `transcription_failed` que producía el filename ausente; el botón de mic queda visualmente
+separado del botón "Guardar"; el canal de texto (`POST /expenses`, el flujo de `Textarea`) no
+cambia su comportamiento en ningún test preexistente; ningún archivo de audio ni su transcripción
+quedan en disco ni en la base de datos más allá del campo `rawInput` (que ya almacena texto libre
+para el canal de texto, y ahora también el texto transcripto para el canal de audio — nunca los
+bytes del audio en sí).
