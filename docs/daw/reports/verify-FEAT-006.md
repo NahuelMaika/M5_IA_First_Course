@@ -67,3 +67,61 @@ Result: PASSED
 ```
 
 **PASSED** — 0 FAILs de F-VER-01 a F-VER-06. `gates.verify` = `true`.
+
+---
+
+## Loop 2 (Block 8) — corrección de filename ausente en FormData + layout del botón de mic
+
+Verificado por `daw-module-verifier` (agente sin autoría del código) contra `prd-FEAT-006.md`,
+`spec-FEAT-006.md` (Block 8) y `threat-FEAT-006.md` (addendum Loop 2). Alcance acotado al Block 8 —
+los blocks 1-7 no se re-verifican, ya cubiertos arriba.
+
+### Trazabilidad PRD → Código → Tests
+
+| Requisito | Código | Test |
+|---|---|---|
+| AC-01 (happy path, roto por el filename ausente) | `expense-form.tsx:57` `audioFilename()` + `:206` `formData.append("file", blob, audioFilename(blob.type))` | `expense-form.test.tsx` "sends the audio FormData with a derived filename instead of the browser default 'blob' (AC-01 root cause)" + "derives the extension from a mimeType with a codecs parameter" — verificado leyendo `file.name` real de la llamada a `apiRequest`, sin mockear `audioFilename` |
+| FR-06 (usabilidad del control de grabación) | `expense-form.tsx:294-326` — `<div className="mt-2 flex items-center gap-2">` envolviendo Guardar + mic | `expense-form.test.tsx` "keeps the tab order unchanged: the 'Guardar' button is still focusable before the mic button" — orden verificado vía `querySelectorAll`, no solo presencia del wrapper |
+
+### Spec — Block 8 (3 tareas de Logic)
+
+- ✅ 1/3 — `audioFilename(mimeType)` en `expense-form.tsx:57`, función pura a nivel de módulo, fallback `"webm"` correcto.
+- ✅ 2/3 — tercer argumento agregado a `formData.append` en `:206`.
+- ✅ 3/3 — wrapper `<div>` en `:294-326`, mismo patrón que `expense-edit-dialog.tsx:361`, sin alterar orden ni atributos de los botones.
+- ✅ Diff real (`git show 2f0b3ac`) acotado exactamente a estas 3 tareas, sin cambios fuera de alcance.
+
+### Tests requeridos (4 checkboxes del Block 8)
+
+Los 4 tests bajo `describe("ExpenseForm — Block 8 fixes (spec-FEAT-006 loop 2)")` cubren 1:1 los 4
+casos del spec: extensión real desde un mimeType con `;codecs=`, fallback `"webm"` ante `blob.type`
+vacío (F-VER-04, sad-path de `audioFilename`), filename derivado presente en el `FormData` real, y
+orden de tabulación sin alterar.
+
+### Cobertura del código nuevo/modificado (F-VER-03)
+
+`expense-form.tsx`: 94.84% stmts / 95.83% branch / 85.71% funcs / 96.77% lines (≥80% requerido).
+Las líneas sin cubrir (80, 122, 262) no pertenecen al Block 8 — `audioFilename` (57-60),
+`submitAudioExpense` (202-246) y el wrapper JSX (289-326) están 100% cubiertos.
+
+### Calidad
+
+- ✅ F-VER-05: `pnpm --filter @ggasia/web typecheck` limpio.
+- ⚠️ Lint: sin linter configurado — mismo estado heredado del loop 1, no es un gap de este loop.
+- ✅ W-VER-01: sin código muerto; el refactor de `recordAndStop()` (de función anidada del describe
+  de Block 7 a función de módulo compartida) está limpio, sin duplicación.
+- ✅ Threat model: `threat-FEAT-006.md`, addendum "Loop 2" — C:0 H:0 M:0 L:0, sin trust boundary
+  nuevo.
+
+### No regresión
+
+- ✅ `expense-list.test.tsx` (orden de tabulación, incluye el botón de mic) → 21/21 verde.
+- ✅ `expense-form.test.tsx` completo → 25/25 verde (incluye Blocks 6/7/8).
+
+### Resultado (Loop 2)
+
+```
+Total: 15 passed, 0 failed, 1 warning (lint no configurado, heredado del loop 1, no bloqueante)
+Result: PASSED
+```
+
+**PASSED** — 0 FAILs de F-VER-01 a F-VER-06 sobre el Block 8. `gates.verify` = `true` (re-confirmado).
