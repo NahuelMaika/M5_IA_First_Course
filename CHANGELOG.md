@@ -119,3 +119,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   context regardless of `z-index`, so the `z-[60]` already present on the child `Popup` could never
   escape it to compete against the Dialog's `z-50`. Fixed by adding `z-[60]` to the `Positioner`
   itself in `apps/web/src/components/ui/select.tsx`. Confirmed working end-to-end in the browser.
+- [FEAT-006] Two defects found in manual testing after the initial implementation: (1) the
+  microphone recording's `FormData` never named its file (`formData.append("file", blob)`), so the
+  browser defaulted the multipart filename to `"blob"` with no extension — Groq's transcription
+  endpoint rejects unrecognized extensions, turning every real recording into a 502
+  `transcription_failed` and breaking the audio channel's happy path. Fixed by deriving a real
+  filename from the recorder's own reported mimeType (`recording.webm`, `.ogg`, etc.) in
+  `apps/web/src/components/expense-form.tsx`. (2) The microphone button had no layout container
+  separating it from the "Guardar" button. Fixed by wrapping both in a `flex items-center gap-2`
+  container, matching the pattern already used elsewhere in the app.
