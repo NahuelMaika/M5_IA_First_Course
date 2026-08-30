@@ -69,6 +69,30 @@ y en las mitigaciones de `threat-FEAT-006.md`.
 
 Ninguna.
 
+## Loop 2 (Block 8) — CODE closeout
+
+Alcance: `apps/web/src/components/expense-form.tsx`, único archivo del diff (commit 2f0b3ac).
+Cambios: función pura `audioFilename(mimeType)`, tercer argumento en `formData.append("file", blob,
+audioFilename(blob.type))`, wrapper `<div>` de layout. Sin dependencias nuevas (`package.json` sin
+cambios, `pnpm audit` no vuelve a correr).
+
+- ✅ F-SAST-01: sin secretos — `audioFilename` no toca env vars ni credenciales.
+- ✅ F-SAST-02/03: sin queries, sin `exec`/`eval`/`new Function`.
+- ✅ F-SAST-05 (path traversal): el filename derivado (`recording.<subtype>`, subtype acotado a la
+  subtype de un `mimeType` real que reporta `MediaRecorder`) sigue siendo metadata opaca reenviada a
+  Groq — nunca se usa para construir un path de filesystem, ni antes ni después de este cambio
+  (`transcription-client.ts`, sin modificar en este loop).
+- ✅ F-SAST-06 (XSS): sin `innerHTML`/`dangerouslySetInnerHTML` nuevos.
+- ✅ F-SAST-09/10: sin logging nuevo, sin flags de debug.
+- ✅ F-SAST-11 (unrestricted upload): sin cambios — el archivo sigue sin tocar disco.
+- ✅ F-SAST-12 (CSRF): sin cambios en auth/sesión.
+- ✅ F-SAST-14: el fallback `|| "webm"` de `audioFilename` es la única rama nueva — no es input de
+  usuario (deriva de `blob.type`, que reporta el propio navegador), no requiere validación adicional.
+- ✅ F-SAST-15: sin cambios en el manejo de errores del endpoint.
+- ✅ F-SAST-13/16: sin dependencias nuevas — `pnpm audit` no aplica a este diff.
+
+**Resultado (loop 2)**: PASSED — 0 Critical, 0 High, 0 Medium sin suprimir, 0 hallazgos nuevos.
+
 ## Resultado
 
-**PASSED** — 0 Critical, 0 High, 0 Medium sin suprimir.
+**PASSED** — 0 Critical, 0 High, 0 Medium sin suprimir (loop 1 + loop 2).
