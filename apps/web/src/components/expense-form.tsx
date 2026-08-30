@@ -50,6 +50,15 @@ function validateExpenseInput(value: string): string | null {
  */
 type InterpretedExpense = CreatedExpense;
 
+// Block 8 (spec-FEAT-006 loop 2): the browser defaults an unnamed FormData Blob to the filename
+// "blob" with no extension. `@fastify/multipart` (apps/api) forwards that name as-is, and Groq
+// rejects it (unrecognized extension) -- the resulting 502 broke AC-01's happy path. Deriving a
+// real filename from the MediaRecorder-reported mimeType fixes it without any UI-facing input.
+function audioFilename(mimeType: string): string {
+  const extension = mimeType.split(";")[0]?.split("/")[1] || "webm";
+  return `recording.${extension}`;
+}
+
 function formatExpenseDate(isoDate: string): string {
   // Fixed locale/timeZone: this is user-facing display, but a floating value here would make the
   // same stored date read differently depending on the visitor's OS settings.
@@ -194,7 +203,7 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
     setIsSubmitting(true);
     try {
       const formData = new FormData();
-      formData.append("file", blob);
+      formData.append("file", blob, audioFilename(blob.type));
 
       const response = await apiRequest("/expenses/audio", {
         method: "POST",
@@ -277,37 +286,44 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
             {error}
           </p>
         ) : null}
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? (
-            <>
-              <Loader2 className="animate-spin" aria-hidden="true" />
-              Guardando...
-            </>
-          ) : (
-            "Guardar"
-          )}
-        </Button>
-        {/* Block 7 (spec-FEAT-006/FR-07/AC-06): grabar y enviar son estados independientes --
-            este botón nunca se deshabilita por `isSubmitting`, ni mientras graba ni fuera de la
-            grabación (por ejemplo mientras el envío de texto está en curso). Va después del botón
-            "Guardar" en el DOM para no alterar el orden de tabulación existente. */}
-        <Button
-          type="button"
-          variant={recordingStatus === "recording" ? "destructive" : "outline"}
-          onClick={handleMicButtonClick}
-        >
-          {recordingStatus === "recording" ? (
-            <>
-              <Square aria-hidden="true" />
-              Detener grabación
-            </>
-          ) : (
-            <>
-              <Mic aria-hidden="true" />
-              Grabar audio
-            </>
-          )}
-        </Button>
+        {/* Block 8 (spec-FEAT-006 loop 2): wrapper de layout -- "Guardar" y el mic no tenían
+            ningún contenedor, quedando sin separación visual predecible (FR-06). Mismo patrón
+            `flex ... gap-2` de `expense-edit-dialog.tsx:361`, con `items-center` en vez de
+            `justify-end` por no ser un diálogo. No altera el orden ni ningún otro atributo de
+            los botones. */}
+        <div className="mt-2 flex items-center gap-2">
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                Guardando...
+              </>
+            ) : (
+              "Guardar"
+            )}
+          </Button>
+          {/* Block 7 (spec-FEAT-006/FR-07/AC-06): grabar y enviar son estados independientes --
+              este botón nunca se deshabilita por `isSubmitting`, ni mientras graba ni fuera de la
+              grabación (por ejemplo mientras el envío de texto está en curso). Va después del
+              botón "Guardar" en el DOM para no alterar el orden de tabulación existente. */}
+          <Button
+            type="button"
+            variant={recordingStatus === "recording" ? "destructive" : "outline"}
+            onClick={handleMicButtonClick}
+          >
+            {recordingStatus === "recording" ? (
+              <>
+                <Square aria-hidden="true" />
+                Detener grabación
+              </>
+            ) : (
+              <>
+                <Mic aria-hidden="true" />
+                Grabar audio
+              </>
+            )}
+          </Button>
+        </div>
       </form>
       {result ? (
         <section

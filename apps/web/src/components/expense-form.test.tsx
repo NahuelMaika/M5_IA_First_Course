@@ -100,6 +100,7 @@ afterEach(() => {
   audioRecorderMock.initialStatus = "idle";
   audioRecorderMock.errorMessage = null;
   audioRecorderMock.startShouldFail = false;
+  audioRecorderMock.stopBlob = new Blob(["fake-audio"], { type: "audio/webm" });
 });
 
 describe("ExpenseForm — client-side validation (Block 6, still exercised through Block 7's wiring)", () => {
@@ -321,14 +322,16 @@ describe("ExpenseForm — submit (Block 7)", () => {
   });
 });
 
+// Shared by Block 7's and Block 8's audio-recording describe blocks below.
+async function recordAndStop(user: ReturnType<typeof userEvent.setup>) {
+  const micButton = screen.getByRole("button", { name: /grabar audio/i });
+  await user.click(micButton);
+  const stopButton = await screen.findByRole("button", { name: /detener grabación/i });
+  await user.click(stopButton);
+}
+
 // Block 7 (spec-FEAT-006): grabación de audio, envío y manejo de sus respuestas.
 describe("ExpenseForm — audio recording (Block 7, FEAT-006)", () => {
-  async function recordAndStop(user: ReturnType<typeof userEvent.setup>) {
-    const micButton = screen.getByRole("button", { name: /grabar audio/i });
-    await user.click(micButton);
-    const stopButton = await screen.findByRole("button", { name: /detener grabación/i });
-    await user.click(stopButton);
-  }
 
   it("happy path: record -> stop -> 201 renders the same interpreted detail as the text flow (AC-01/AC-10)", async () => {
     mockedApiRequest.mockResolvedValueOnce(jsonResponse(201, CREATED_EXPENSE_BODY));
@@ -515,5 +518,73 @@ describe("ExpenseForm — audio recording (Block 7, FEAT-006)", () => {
 
     await waitFor(() => expect(mockedNotify).toHaveBeenCalledTimes(1));
     expect(mockedNotify).toHaveBeenCalledWith("error", expect.stringMatching(/ocurrió un error/i));
+  });
+});
+
+// Block 8 (spec-FEAT-006, spec loop 2): fix del filename ausente en el FormData de audio y del
+// layout del botón de mic.
+describe("ExpenseForm — Block 8 fixes (spec-FEAT-006 loop 2)", () => {
+  it("sends the audio FormData with a derived filename instead of the browser default 'blob' (AC-01 root cause)", async () => {
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(201, CREATED_EXPENSE_BODY));
+    const user = userEvent.setup();
+    render(<ExpenseForm />);
+
+    await recordAndStop(user);
+
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledTimes(1));
+    const [, init] = mockedApiRequest.mock.calls[0]!;
+    const formData = init?.body as FormData;
+    const file = formData.get("file") as File;
+    // audioRecorderMock.stopBlob has type "audio/webm" -> subtype "webm" -> "recording.webm".
+    expect(file.name).toBe("recording.webm");
+  });
+
+  it("derives the extension from a mimeType with a codecs parameter (e.g. 'audio/webm;codecs=opus' -> 'recording.webm')", async () => {
+    audioRecorderMock.stopBlob = new Blob(["fake-audio"], {
+      type: "audio/webm;codecs=opus",
+    });
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(201, CREATED_EXPENSE_BODY));
+    const user = userEvent.setup();
+    render(<ExpenseForm />);
+
+    await recordAndStop(user);
+
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledTimes(1));
+    const [, init] = mockedApiRequest.mock.calls[0]!;
+    const file = (init?.body as FormData).get("file") as File;
+    expect(file.name).toBe("recording.webm");
+  });
+
+  it("falls back to 'recording.webm' when blob.type is an empty string", async () => {
+    audioRecorderMock.stopBlob = new Blob(["fake-audio"], { type: "" });
+    mockedApiRequest.mockResolvedValueOnce(jsonResponse(201, CREATED_EXPENSE_BODY));
+    const user = userEvent.setup();
+    render(<ExpenseForm />);
+
+    await recordAndStop(user);
+
+    await waitFor(() => expect(mockedApiRequest).toHaveBeenCalledTimes(1));
+    const [, init] = mockedApiRequest.mock.calls[0]!;
+    const file = (init?.body as FormData).get("file") as File;
+    expect(file.name).toBe("recording.webm");
+  });
+
+  it("keeps the tab order unchanged: the 'Guardar' button is still focusable before the mic button", async () => {
+    render(<ExpenseForm />);
+
+    const focusableElements = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        "button, [href], input, select, textarea, [tabindex]"
+      )
+    );
+    const saveIndex = focusableElements.findIndex(
+      (element) => element.getAttribute("type") === "submit"
+    );
+    const micIndex = focusableElements.findIndex((element) =>
+      /grabar audio/i.test(element.getAttribute("aria-label") ?? element.textContent ?? "")
+    );
+
+    expect(saveIndex).toBeGreaterThanOrEqual(0);
+    expect(micIndex).toBeGreaterThan(saveIndex);
   });
 });
