@@ -134,6 +134,7 @@ export async function createExpense(
   deps: ExpenseServiceDeps,
   userId: string,
   rawInput: string,
+  channel: Expense["channel"] = "texto",
 ): Promise<ExpenseServiceResult> {
   const referenceDate = new Date();
   const parseResult = parseExpense(rawInput, referenceDate, createCategorizer());
@@ -162,7 +163,7 @@ export async function createExpense(
       type: parsed.type,
       currency: "ARS",
       rawInput,
-      channel: "texto",
+      channel,
     });
 
     return { outcome: "created", expense, category: resolution.categoryName };

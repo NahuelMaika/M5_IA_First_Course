@@ -10,9 +10,22 @@
  * across the whole file, never reset between tests) never bleeds from one test into another.
  */
 import { randomUUID } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { authPreHandler } from "../../src/plugins/auth.ts";
-import { SESSION_COOKIE_NAME } from "../../src/app.ts";
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly -- same ordering issue as
+// `tests/routes/expenses.test.ts`, fixed the same way: load the root `.env` first, then import
+// `app.ts` dynamically. `src/plugins/auth.ts` itself statically imports `SESSION_COOKIE_NAME` from
+// `../app.ts`, so `authPreHandler` must be imported dynamically here too -- a static import of it
+// would resolve `app.ts` (and therefore `env.ts`) before `config()` below ever runs.
+const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
+config({ path: path.resolve(apiRoot, "../../.env") });
+
+const { SESSION_COOKIE_NAME } = await import("../../src/app.ts");
+const { authPreHandler } = await import("../../src/plugins/auth.ts");
 
 // Only `userRepository.create` is overridden, and only in the P2002-race test below -- every other
 // test in this file goes through the real implementation (wrapped, not replaced) against the fake

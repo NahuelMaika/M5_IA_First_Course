@@ -70,6 +70,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   dialogs mount once at list level, and a successful edit or delete updates the list in place
   without a reload, with a brief success/error notification through the centralized `notify()`
   module.
+- [FEAT-006] Alta de gasto por audio. `apps/api`: `POST /expenses/audio` accepts a
+  `multipart/form-data` recording (`@fastify/multipart`, 25MB limit both at the plugin and
+  per-route `bodyLimit`), transcribes it via Groq's audio-transcription endpoint
+  (`transcription-client.ts`, a 6s timeout, HTTPS enforced on `TRANSCRIPTION_BASE_URL`), and runs
+  the transcribed text through the same `createExpense` pipeline as the text channel, now
+  parameterized by a new `channel` ("texto" | "audio") persisted on `Expense`. The raw audio bytes
+  are never written to disk or logged — processed in memory and discarded once transcribed (see
+  `docs/daw/security/threat-FEAT-006.md`). `apps/web`: a microphone button next to the expense
+  Textarea (`useAudioRecorder`, a `MediaRecorder`/`getUserMedia` wrapper), independent of the
+  text flow's `isSubmitting` state, that records, stops, and submits the audio as `FormData` to
+  the new endpoint, reusing the same result/error UI as the text channel.
 
 ### Changed
 
@@ -108,3 +119,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   context regardless of `z-index`, so the `z-[60]` already present on the child `Popup` could never
   escape it to compete against the Dialog's `z-50`. Fixed by adding `z-[60]` to the `Positioner`
   itself in `apps/web/src/components/ui/select.tsx`. Confirmed working end-to-end in the browser.
+- [FEAT-006] Two defects found in manual testing after the initial implementation: (1) the
+  microphone recording's `FormData` never named its file (`formData.append("file", blob)`), so the
+  browser defaulted the multipart filename to `"blob"` with no extension — Groq's transcription
+  endpoint rejects unrecognized extensions, turning every real recording into a 502
+  `transcription_failed` and breaking the audio channel's happy path. Fixed by deriving a real
+  filename from the recorder's own reported mimeType (`recording.webm`, `.ogg`, etc.) in
+  `apps/web/src/components/expense-form.tsx`. (2) The microphone button had no layout container
+  separating it from the "Guardar" button. Fixed by wrapping both in a `flex items-center gap-2`
+  container, matching the pattern already used elsewhere in the app.

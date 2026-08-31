@@ -11,6 +11,7 @@
 
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance } from "fastify";
 import prismaPlugin from "./plugins/prisma.ts";
 import { authRoutes } from "./routes/auth.ts";
@@ -111,6 +112,11 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   // validated against a SHA-256 hash stored in the DB (threat-FEAT-004a.md's explicit decision
   // not to sign cookies).
   app.register(cookie);
+  // `limits.fileSize` (25 MB) is a backstop for the per-route `bodyLimit` the new audio route
+  // (spec-FEAT-006 Block 5) declares on itself -- it only kicks in for a chunked body without a
+  // reliable `Content-Length` header. The instance-wide `bodyLimit: 16384` above is untouched and
+  // keeps protecting `POST /expenses` and every other text route (ADR-005).
+  app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024, files: 1 } });
   app.register(authRoutes);
   app.register(expensesRoutes);
   app.register(categoriesRoutes);

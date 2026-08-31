@@ -24,6 +24,7 @@ import {
 import type { UpdateExpenseBody } from "../schemas/expense.ts";
 import { createExpense, deleteExpense, listExpenses, updateExpense } from "../services/expense-service.ts";
 import type { UpdateExpensePatch } from "../services/expense-service.ts";
+import { transcribeAudio } from "../services/transcription-client.ts";
 
 async function handleCreateExpense(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const bodyResult = createExpenseBodySchema.safeParse(request.body);
@@ -57,6 +58,90 @@ async function handleCreateExpense(request: FastifyRequest, reply: FastifyReply)
     // No route-local log here: the service already logs the real error (without `rawInput`) via
     // the `logger` dep just passed above -- a second, generic log at this layer would only
     // duplicate the entry without adding diagnostic value.
+    reply.code(500).send({ error: "internal_error" });
+    return;
+  }
+
+  const { expense, category } = result;
+
+  reply.code(201).send({
+    amount: expense.amount.toFixed(2),
+    place: expense.place,
+    when: expense.when,
+    category,
+    categoryOrigin: expense.categoryOrigin,
+    description: expense.description,
+    name: expense.name,
+    type: expense.type,
+    currency: expense.currency,
+  });
+}
+
+/**
+ * `POST /expenses/audio` route (spec-FEAT-006 Block 5).
+ *
+ * Same `routes -> service -> repository` shape as `handleCreateExpense`, with two extra steps
+ * ahead of it: reading the uploaded file off the multipart request (`@fastify/multipart`, Block 4)
+ * and transcribing it (`transcribeAudio`, Block 3) into the `rawInput` string `createExpense`
+ * (Block 2's `channel` parameter) already knows how to consume. Neither the raw audio `buffer` nor
+ * the transcribed text is ever included in a response body -- every early-return branch below
+ * sends a fixed, generic body (FR-03/AC-02).
+ */
+async function handleCreateExpenseFromAudio(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const data = await request.file();
+
+  if (!data) {
+    reply.code(400).send({ error: "validation_error" });
+    return;
+  }
+
+  const userId = request.userId;
+
+  if (!userId) {
+    // Defensive only: see `handleCreateExpense`'s identical branch.
+    reply.code(401).send({ error: "unauthorized" });
+    return;
+  }
+
+  let buffer: Buffer;
+  try {
+    buffer = await data.toBuffer();
+  } catch {
+    // The route's own `bodyLimit` (25 MB, see `expensesRoutes` below) already rejects most
+    // oversized requests before this handler even runs -- this `catch` only covers the residual
+    // case of a chunked body without a reliable `Content-Length` (AC-04). No custom body: the
+    // plugin/Fastify's own 413 response is enough, and never reflects the (partial) buffer back.
+    reply.code(413).send();
+    return;
+  }
+
+  const transcription = await transcribeAudio(buffer, data.filename, data.mimetype, { logger: request.log });
+
+  if (transcription.outcome === "error") {
+    reply.code(502).send({ error: "transcription_failed" });
+    return;
+  }
+
+  if (transcription.text.trim() === "") {
+    reply.code(422).send({ reason: "transcripcion_vacia" });
+    return;
+  }
+
+  const result = await createExpense(
+    { prisma: request.server.prisma, logger: request.log },
+    userId,
+    transcription.text,
+    "audio",
+  );
+
+  if (result.outcome === "rejected") {
+    reply.code(422).send({ reason: result.reason });
+    return;
+  }
+
+  if (result.outcome === "internal_error") {
+    // No route-local log here: same reasoning as `handleCreateExpense`'s 500 branch -- the service
+    // already logs the real error (without `rawInput`) via the `logger` dep just passed above.
     reply.code(500).send({ error: "internal_error" });
     return;
   }
@@ -278,6 +363,14 @@ export async function expensesRoutes(app: FastifyInstance): Promise<void> {
     url: "/expenses",
     preHandler: [authPreHandler],
     handler: handleCreateExpense,
+  });
+
+  app.route({
+    method: "POST",
+    url: "/expenses/audio",
+    preHandler: [authPreHandler],
+    bodyLimit: 25 * 1024 * 1024,
+    handler: handleCreateExpenseFromAudio,
   });
 
   app.route({

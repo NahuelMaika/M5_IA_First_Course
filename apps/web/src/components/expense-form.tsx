@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Mic, Square } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/api/client";
 import { useRedirectOnUnauthorized } from "@/lib/auth/use-redirect-on-unauthorized";
+import { useAudioRecorder } from "@/lib/hooks/use-audio-recorder";
 import { notify } from "@/lib/notifications/notifications";
 import { getRejectionMessage, type RejectionReason } from "@/lib/rejection-messages";
 
@@ -22,6 +23,11 @@ const LENGTH_ERROR_MESSAGE = "Máximo 500 caracteres.";
 // (spec-FEAT-004b) routes it to `useRedirectOnUnauthorized` instead, since it means the session
 // expired or is absent, not a generic failure.
 const GENERIC_ERROR_MESSAGE = "Ocurrió un error, intentá de nuevo.";
+// Block 7 (spec-FEAT-006): audio-specific messages, distinct from the domain `RejectionReason`s.
+const EMPTY_TRANSCRIPTION_MESSAGE =
+  "No pudimos reconocer texto en el audio grabado. Probá de nuevo o escribí el gasto.";
+const TRANSCRIPTION_FAILED_MESSAGE =
+  "No pudimos transcribir el audio. Probá de nuevo o escribí el gasto.";
 
 const EXPENSE_INPUT_ID = "expense-input";
 const EXPENSE_INPUT_ERROR_ID = "expense-input-error";
@@ -43,6 +49,15 @@ function validateExpenseInput(value: string): string | null {
  * same single definition instead of two structurally-identical interfaces drifting apart.
  */
 type InterpretedExpense = CreatedExpense;
+
+// Block 8 (spec-FEAT-006 loop 2): the browser defaults an unnamed FormData Blob to the filename
+// "blob" with no extension. `@fastify/multipart` (apps/api) forwards that name as-is, and Groq
+// rejects it (unrecognized extension) -- the resulting 502 broke AC-01's happy path. Deriving a
+// real filename from the MediaRecorder-reported mimeType fixes it without any UI-facing input.
+function audioFilename(mimeType: string): string {
+  const extension = mimeType.split(";")[0]?.split("/")[1] || "webm";
+  return `recording.${extension}`;
+}
 
 function formatExpenseDate(isoDate: string): string {
   // Fixed locale/timeZone: this is user-facing display, but a floating value here would make the
@@ -95,12 +110,28 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
   const [isSubmitting, setIsSubmitting] = React.useState(false);
   const [result, setResult] = React.useState<InterpretedExpense | null>(null);
   const handleUnauthorized = useRedirectOnUnauthorized();
+  const {
+    status: recordingStatus,
+    errorMessage: recordingErrorMessage,
+    start: startRecording,
+    stop: stopRecording,
+  } = useAudioRecorder();
 
   React.useImperativeHandle(ref, () => ({
     focus: () => {
       document.getElementById(EXPENSE_INPUT_ID)?.focus();
     },
   }));
+
+  // Block 7 (spec-FEAT-006/AC-08): the hook itself does not call `notify` (kept decoupled from the
+  // UI, see use-audio-recorder.ts) -- this is the one place that surfaces a permission-denied or
+  // unsupported-browser error once it happens. The text `Textarea` below needs no change to stay
+  // operable: it was never disabled by anything related to the recorder.
+  React.useEffect(() => {
+    if (recordingStatus === "error" && recordingErrorMessage) {
+      notify("error", recordingErrorMessage);
+    }
+  }, [recordingStatus, recordingErrorMessage]);
 
   const hasError = error !== null;
 
@@ -160,6 +191,69 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
     }
   }
 
+  /**
+   * Block 7 (spec-FEAT-006): sends a recorded blob to `POST /expenses/audio`. Reuses the same
+   * `isSubmitting` flag as `submitExpense` (FR-08/AC-09 -- same visual "Guardando..." pattern,
+   * same disabled "Guardar" button) even though this request never touches the `Textarea`'s value.
+   * Deliberately does NOT set a `Content-Type` header: the browser must compute the multipart
+   * boundary itself from the `FormData` body -- a hardcoded `application/json` (copied from
+   * `submitExpense`) would break the upload.
+   */
+  async function submitAudioExpense(blob: Blob) {
+    setIsSubmitting(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", blob, audioFilename(blob.type));
+
+      const response = await apiRequest("/expenses/audio", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.status === 201) {
+        const data = (await response.json()) as InterpretedExpense;
+        setResult(data);
+        onCreated?.(data);
+        return;
+      }
+
+      if (handleUnauthorized(response)) return;
+
+      if (response.status === 422) {
+        const body = (await response.json()) as { reason?: unknown };
+        if (body.reason === "transcripcion_vacia") {
+          notify("error", EMPTY_TRANSCRIPTION_MESSAGE);
+          return;
+        }
+        notify("error", resolveRejectionMessage(body.reason));
+        return;
+      }
+
+      if (response.status === 502) {
+        notify("error", TRANSCRIPTION_FAILED_MESSAGE);
+        return;
+      }
+
+      // 400/413/500 (and any other non-201/422/401/502 status): generic message, body never
+      // parsed -- same criterion as `submitExpense`.
+      notify("error", GENERIC_ERROR_MESSAGE);
+    } catch {
+      // Network failure (fetch itself rejects, no response at all): same treatment as a 500.
+      notify("error", GENERIC_ERROR_MESSAGE);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleMicButtonClick() {
+    if (recordingStatus === "recording") {
+      const blob = await stopRecording();
+      void submitAudioExpense(blob);
+      return;
+    }
+    void startRecording();
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const validationError = validateExpenseInput(value);
@@ -192,16 +286,44 @@ export const ExpenseForm = React.forwardRef<ExpenseFormHandle, ExpenseFormProps>
             {error}
           </p>
         ) : null}
-        <Button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? (
-            <>
-              <Loader2 className="animate-spin" aria-hidden="true" />
-              Guardando...
-            </>
-          ) : (
-            "Guardar"
-          )}
-        </Button>
+        {/* Block 8 (spec-FEAT-006 loop 2): wrapper de layout -- "Guardar" y el mic no tenían
+            ningún contenedor, quedando sin separación visual predecible (FR-06). Mismo patrón
+            `flex ... gap-2` de `expense-edit-dialog.tsx:361`, con `items-center` en vez de
+            `justify-end` por no ser un diálogo. No altera el orden ni ningún otro atributo de
+            los botones. */}
+        <div className="mt-2 flex items-center gap-2">
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <>
+                <Loader2 className="animate-spin" aria-hidden="true" />
+                Guardando...
+              </>
+            ) : (
+              "Guardar"
+            )}
+          </Button>
+          {/* Block 7 (spec-FEAT-006/FR-07/AC-06): grabar y enviar son estados independientes --
+              este botón nunca se deshabilita por `isSubmitting`, ni mientras graba ni fuera de la
+              grabación (por ejemplo mientras el envío de texto está en curso). Va después del
+              botón "Guardar" en el DOM para no alterar el orden de tabulación existente. */}
+          <Button
+            type="button"
+            variant={recordingStatus === "recording" ? "destructive" : "outline"}
+            onClick={handleMicButtonClick}
+          >
+            {recordingStatus === "recording" ? (
+              <>
+                <Square aria-hidden="true" />
+                Detener grabación
+              </>
+            ) : (
+              <>
+                <Mic aria-hidden="true" />
+                Grabar audio
+              </>
+            )}
+          </Button>
+        </div>
       </form>
       {result ? (
         <section

@@ -352,6 +352,43 @@ describe("expenseService.createExpense (Block 9, spec-FEAT-002)", () => {
     }
   });
 
+  it("persists channel: 'texto' when createExpense is called without the 4th argument (Block 2, spec-FEAT-006, no regression)", async () => {
+    const { createExpense } = await import("../../src/services/expense-service.ts");
+    const prisma = fakePrismaClient(seedFor());
+
+    // biome-ignore-next: fake client only exposes the methods the service exercises.
+    const result = await createExpense({ prisma: prisma as never }, TEST_USER_ID, "café 1500");
+
+    expect(result.outcome).toBe("created");
+    if (result.outcome === "created") {
+      expect(result.expense).toMatchObject({ channel: "texto" });
+    }
+    expect(prisma.expense.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ channel: "texto" }) }),
+    );
+  });
+
+  it("persists channel: 'audio' when createExpense is called with 'audio' as the 4th argument (Block 2, spec-FEAT-006)", async () => {
+    const { createExpense } = await import("../../src/services/expense-service.ts");
+    const prisma = fakePrismaClient(seedFor());
+
+    const result = await createExpense(
+      // biome-ignore-next: fake client only exposes the methods the service exercises.
+      { prisma: prisma as never },
+      TEST_USER_ID,
+      "café 1500",
+      "audio",
+    );
+
+    expect(result.outcome).toBe("created");
+    if (result.outcome === "created") {
+      expect(result.expense).toMatchObject({ channel: "audio" });
+    }
+    expect(prisma.expense.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ channel: "audio" }) }),
+    );
+  });
+
   it("uses the server's own clock as referenceDate, never a field read from rawInput", async () => {
     const { createExpense } = await import("../../src/services/expense-service.ts");
     const prisma = fakePrismaClient(seedFor());

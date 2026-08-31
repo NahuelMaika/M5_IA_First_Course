@@ -11,9 +11,22 @@
  * connection is used.
  */
 import { createHash } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import { describe, expect, it, vi } from "vitest";
-import { buildApp, SESSION_COOKIE_NAME } from "../../src/app.ts";
-import { authPreHandler } from "../../src/plugins/auth.ts";
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly -- same ordering issue as
+// `tests/routes/expenses.test.ts`, fixed the same way: load the root `.env` first, then import
+// `app.ts` dynamically. `src/plugins/auth.ts` itself statically imports `SESSION_COOKIE_NAME` from
+// `../app.ts`, so `authPreHandler` must be imported dynamically here too -- a static import of it
+// would resolve `app.ts` (and therefore `env.ts`) before `config()` below ever runs.
+const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
+config({ path: path.resolve(apiRoot, "../../.env") });
+
+const { buildApp, SESSION_COOKIE_NAME } = await import("../../src/app.ts");
+const { authPreHandler } = await import("../../src/plugins/auth.ts");
 
 const TEST_USER_ID = "11111111-1111-1111-1111-111111111111";
 const VALID_TOKEN = "valid-raw-session-token";

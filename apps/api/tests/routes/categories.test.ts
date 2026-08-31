@@ -7,8 +7,19 @@
  * repository/visibility logic.
  */
 import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { config } from "dotenv";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SESSION_COOKIE_NAME } from "../../src/app.ts";
+
+// Block 5 (spec-FEAT-006) makes `src/routes/expenses.ts` import `transcription-client.ts`
+// statically, which imports `env.ts` eagerly -- same ordering issue as
+// `tests/routes/expenses.test.ts`, fixed the same way: load the root `.env` first, then import
+// `app.ts` dynamically.
+const apiRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..", "..");
+config({ path: path.resolve(apiRoot, "../../.env") });
+
+const { SESSION_COOKIE_NAME } = await import("../../src/app.ts");
 
 const TEST_TIMEOUT_MS = 60_000;
 
